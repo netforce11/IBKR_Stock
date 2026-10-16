@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
     def _boot_step3(self) -> None:
         log.info("Boot Step3: Feed start")
         self._status_bar.showMessage("Step3: Feed 시작...")
-        from calc.calc_process import CalcProcess
+        from shared.calc.calc_process import CalcProcess
         self._calc = CalcProcess(self._bus, self._calc_queue)
         self._calc.start()
 
