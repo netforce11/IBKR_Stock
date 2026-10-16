@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-BASE_DIR = Path.home() / "trading_terminal" / "ibkr_stock"
+BASE_DIR = Path("/home/netforce/trading_terminal/ibkr_stock")
 DATA_DIR = BASE_DIR / "data"
 LOG_DIR  = BASE_DIR / "logs"
 LAYOUT_FILE = BASE_DIR / "grid_layout.json"
