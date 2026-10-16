@@ -11,9 +11,10 @@ from PyQt6.QtWidgets import QMainWindow, QApplication, QStatusBar, QMenuBar
 from PyQt6.QtCore import QTimer
 
 from config.settings import CONFIG, LAYOUT_FILE
-from core.bus import get_bus
-from core.topics import Topics
-from core.risk_manager import RiskManager
+from shared.core.bus import get_bus
+from shared.core.topics import Topics
+from shared.core.risk_manager import RiskManager
+from shared.ui.shortcut_manager import ShortcutManager
 from core.engine import TradingEngine
 from ui.panels.orderbook_panel import OrderbookPanel
 from ui.panels.portfolio_panel import PortfolioPanel
@@ -25,7 +26,7 @@ def _make_broker(bus):
     if CONFIG.broker == "ibkr":
         from broker.ibkr_broker import IBKRBroker
         return IBKRBroker(bus, CONFIG.ibkr.host, CONFIG.ibkr.port, CONFIG.ibkr.client_id)
-    from broker.mock_broker import MockBroker
+    from shared.broker.mock_broker import MockBroker
     return MockBroker(bus)
 
 
@@ -92,6 +93,7 @@ class MainWindow(QMainWindow):
         risk = RiskManager(self._bus, CONFIG.risk)
         self._engine = TradingEngine(self._bus, self._cmd_queue, risk, self._broker)
         self._engine.start()
+        self._shortcut_mgr = ShortcutManager(self)
         self._build_panels()
         self._restore_layout()
         self._status_bar.showMessage("준비")
@@ -102,6 +104,9 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import Qt
         self._ob_panel = OrderbookPanel("AAPL", self._bus, self)
         self._pf_panel = PortfolioPanel(self._bus, self)
+        # ShortcutManager 연결
+        self._ob_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._pf_panel.set_shortcut_manager(self._shortcut_mgr)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._ob_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._pf_panel)
 

@@ -4,9 +4,9 @@
 from __future__ import annotations
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel
 from PyQt6.QtCore import pyqtSlot
-from core.bus import DataBus
-from core.topics import Topics
-from ui.panels.base_panel import BasePanel
+from shared.core.bus import DataBus
+from shared.core.topics import Topics
+from shared.ui.panels.base_panel import BasePanel
 
 
 class PortfolioPanel(BasePanel):

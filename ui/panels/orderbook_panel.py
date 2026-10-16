@@ -5,9 +5,9 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QLabel, QHBoxLayout, QWidget
 from PyQt6.QtCore import pyqtSlot, Qt
 from PyQt6.QtGui import QColor
-from core.bus import DataBus
-from core.topics import Topics
-from ui.panels.base_panel import BasePanel
+from shared.core.bus import DataBus
+from shared.core.topics import Topics
+from shared.ui.panels.base_panel import BasePanel
 
 
 class OrderbookPanel(BasePanel):

@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 import logging
-from core.order_validator import OrderRequest
-from broker.base_broker import BaseBroker
-from core.bus import DataBus
-from core.topics import Topics
+from shared.core.order_validator import OrderRequest
+from shared.broker.base_broker import BaseBroker
+from shared.core.bus import DataBus
+from shared.core.topics import Topics
 
 log = logging.getLogger(__name__)
 

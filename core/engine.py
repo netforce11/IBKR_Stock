@@ -1,4 +1,4 @@
-# core/engine.py
+# core/engine.py  (IBKR_Stock 전용)
 # Trading Engine — cmd_queue 수신 → 주문 처리 → DataBus 발행
 # Core는 PyQt를 절대 import하지 않음
 
@@ -8,10 +8,10 @@ import threading
 import logging
 from typing import Any
 
-from core.bus import DataBus
-from core.topics import Topics
-from core.order_validator import OrderValidator, OrderRequest
-from core.risk_manager import RiskManager
+from shared.core.bus import DataBus
+from shared.core.topics import Topics
+from shared.core.order_validator import OrderValidator, OrderRequest
+from shared.core.risk_manager import RiskManager
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class TradingEngine:
         bus: DataBus,
         cmd_queue: queue.Queue,
         risk: RiskManager,
-        broker,  # BaseBroker 구현체 (lazy 타입 힌트)
+        broker,
     ) -> None:
         self._bus = bus
         self._cmd_queue = cmd_queue
@@ -32,7 +32,6 @@ class TradingEngine:
         self._running = False
         self._thread: threading.Thread | None = None
 
-    # ── 생명주기 ─────────────────────────────────────────
     def start(self) -> None:
         self._running = True
         self._thread = threading.Thread(
@@ -43,11 +42,10 @@ class TradingEngine:
 
     def stop(self) -> None:
         self._running = False
-        self._cmd_queue.put(None)  # poison pill
+        self._cmd_queue.put(None)
         if self._thread:
             self._thread.join(timeout=5)
 
-    # ── 메인 루프 ─────────────────────────────────────────
     def _loop(self) -> None:
         while self._running:
             try:
@@ -73,7 +71,6 @@ class TradingEngine:
         else:
             log.warning("Unknown command: %s", action)
 
-    # ── 주문 처리 ─────────────────────────────────────────
     def _place_order(self, cmd: dict) -> None:
         req = OrderRequest(
             symbol=cmd["symbol"],
@@ -82,22 +79,16 @@ class TradingEngine:
             price=cmd.get("price"),
             order_type=cmd.get("order_type", "MKT"),
         )
-
-        # 1) OrderValidator 검증
         v = self._validator.validate(req)
         if not v.ok:
-            log.warning("Validation failed: %s", v.reason)
             self._bus.publish(Topics.SYSTEM_ERROR, {"msg": f"주문 검증 실패: {v.reason}"})
             return
 
-        # 2) RiskManager 검증
         r = self._risk.check_order(req)
         if not r.ok:
-            log.warning("Risk check failed: %s", r.reason)
             self._bus.publish(Topics.RISK_WARNING, {"msg": r.reason})
             return
 
-        # 3) 브로커 발주
         try:
             order_id = self._broker.place_order(req)
             self._bus.publish(Topics.order_status(order_id), {"status": "submitted"})
@@ -109,5 +100,4 @@ class TradingEngine:
         try:
             self._broker.cancel_order(cmd["order_id"])
         except Exception as e:
-            log.exception("Broker cancel_order error")
             self._bus.publish(Topics.SYSTEM_ERROR, {"msg": str(e)})

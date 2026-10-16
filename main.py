@@ -2,9 +2,14 @@
 # 앱 시작 — 크래시 로거 설치 → QApplication → MainWindow
 
 import sys
+import os
 import logging
 import traceback
 from pathlib import Path
+
+# shared submodule을 import 경로에 추가
+sys.path.insert(0, str(Path(__file__).parent))
+
 from config.settings import LOG_DIR
 
 
