@@ -19,9 +19,12 @@ from shared.core.risk_manager import RiskManager
 from shared.ui.shortcut_manager import ShortcutManager
 from shared.ui.layout_manager import PanelLayoutManager
 from core.engine import TradingEngine
+from core.storage.stock_db import StockDBManager
+from core.feed.ibkr_feed import IBKRFeed
 from ui.panels.orderbook_panel import OrderbookPanel
 from ui.panels.portfolio_panel import PortfolioPanel
 from ui.panels.order_panel import OrderPanel
+from ui.panels.fill_history_panel import FillHistoryPanel
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
         self._act_portfolio  = QAction("포트폴리오", self, checkable=True, checked=True)
         self._act_chart      = QAction("차트",      self, checkable=True, checked=True)
         self._act_order      = QAction("주문",      self, checkable=True, checked=True)
+        self._act_fills      = QAction("체결내역",   self, checkable=True, checked=True)
         self._act_orderbook.triggered.connect(
             lambda v: self._layout_mgr.show_panel("orderbook", v))
         self._act_portfolio.triggered.connect(
@@ -85,8 +89,10 @@ class MainWindow(QMainWindow):
             lambda v: self._layout_mgr.show_panel("stock_chart", v))
         self._act_order.triggered.connect(
             lambda v: self._layout_mgr.show_panel("order", v))
+        self._act_fills.triggered.connect(
+            lambda v: self._layout_mgr.show_panel("fill_history", v))
         for act in (self._act_orderbook, self._act_portfolio,
-                    self._act_chart, self._act_order):
+                    self._act_chart, self._act_order, self._act_fills):
             view_menu.addAction(act)
 
         # 레이아웃 메뉴
@@ -133,14 +139,24 @@ class MainWindow(QMainWindow):
             return
         self._boot_step3()
 
-    # ── Step3: Feed / CalcProcess 시작 ───────────────────
+    # ── Step3: Feed / CalcProcess / DB 시작 ─────────────
     def _boot_step3(self) -> None:
-        log.info("Boot Step3: Feed start")
-        self._status_bar.showMessage("Step3: Feed 시작...")
+        log.info("Boot Step3: Feed + DB start")
+        self._status_bar.showMessage("Step3: Feed / DB 시작...")
+
+        # CalcProcess
         from shared.calc.calc_process import CalcProcess
         self._calc = CalcProcess(self._bus, self._calc_queue)
         self._calc.start()
         self._bus.subscribe("stock.price.*", self, self._bridge_to_calc)
+
+        # StockDB — 주문/체결/포지션/일일리스크 저장
+        self._db = StockDBManager(self._bus)
+        self._db.start()
+
+        # IBKRFeed — 브로커 통해 실시간 시세 구독
+        self._feed = IBKRFeed(self._broker, self._bus)
+
         self._boot_step4()
 
     # ── Step4: Engine + 패널 빌드 ────────────────────────
@@ -178,6 +194,11 @@ class MainWindow(QMainWindow):
         self._order_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._order_panel, title="주문")
 
+        # 체결 내역 패널 (Phase 2)
+        self._fill_panel = FillHistoryPanel(self._bus, self._db)
+        self._fill_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._fill_panel, title="체결내역")
+
         # 차트 (pyqtgraph 없으면 skip)
         try:
             from ui.panels.chart_panel import StockChartPanel
@@ -187,8 +208,8 @@ class MainWindow(QMainWindow):
         except ImportError as e:
             log.warning("차트 패널 로드 실패 (pyqtgraph?): %s", e)
 
-        # 피드 구독 시작
-        self._cmd_queue.put({"action": "subscribe_feed", "symbol": "AAPL"})
+        # Feed 구독 시작 (IBKRFeed or MockBroker 자체 피드)
+        self._feed.subscribe("AAPL")
 
         # 저장된 레이아웃 없을 때 기본 배치
         self._reset_layout(save=False)
@@ -212,12 +233,14 @@ class MainWindow(QMainWindow):
         bot_h   = mdi_h - top_h - 8
 
         order_w  = 280
+        fill_w   = 460
         chart_w  = right_w - order_w - 8
 
         self._layout_mgr.place("orderbook",   0,                    0,        left_w,  mdi_h)
         self._layout_mgr.place("order",       left_w+8,             0,        order_w, top_h)
         self._layout_mgr.place("portfolio",   left_w+8+order_w+8,   0,        chart_w, top_h)
-        self._layout_mgr.place("stock_chart", left_w+8,             top_h+8,  right_w, bot_h)
+        self._layout_mgr.place("stock_chart", left_w+8,             top_h+8,  chart_w+order_w+8, bot_h - 200)
+        self._layout_mgr.place("fill_history",left_w+8,             top_h+8+bot_h-200, right_w, 192)
 
         if save:
             self._layout_mgr.save()
@@ -246,6 +269,8 @@ class MainWindow(QMainWindow):
         self._save_layout()
         self._engine.stop()
         self._calc.stop()
+        self._db.stop()
+        self._feed.unsubscribe("AAPL")
         self._broker.disconnect()
         self._bus.unsubscribe_all(self)
         super().closeEvent(event)
