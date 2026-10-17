@@ -11,9 +11,11 @@ from shared.ui.panels.base_panel import BasePanel
 
 class PortfolioPanel(BasePanel):
     PANEL_ID = "portfolio"
+    TITLE = "포트폴리오"
+    DEFAULT_SIZE = (500, 300)
 
     def __init__(self, bus: DataBus, parent=None) -> None:
-        super().__init__("포트폴리오", bus, parent)
+        super().__init__(bus, parent)
         self._build_ui()
         bus.subscribe(Topics.PORTFOLIO_SUMMARY, self,
                       lambda d: self._invoke_main("_refresh", d))

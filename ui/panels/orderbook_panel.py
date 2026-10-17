@@ -12,9 +12,12 @@ from shared.ui.panels.base_panel import BasePanel
 
 class OrderbookPanel(BasePanel):
     PANEL_ID = "orderbook"
+    TITLE = "호가창"
+    DEFAULT_SIZE = (320, 500)
 
     def __init__(self, symbol: str, bus: DataBus, parent=None) -> None:
-        super().__init__(f"호가창 — {symbol}", bus, parent)
+        super().__init__(bus, parent)
+        self.TITLE = f"호가창 — {symbol}"
         self._symbol = symbol
         self._build_ui()
 

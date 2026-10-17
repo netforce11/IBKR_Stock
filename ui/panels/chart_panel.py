@@ -43,10 +43,11 @@ class IBKRMinuteLoader(BaseMinuteLoader):
 class StockChartPanel(MinuteChartPanel):
     """IBKR_Stock 전용 차트 패널"""
     PANEL_ID = "stock_chart"
+    TITLE = "주식 차트"
+    DEFAULT_SIZE = (800, 500)
 
     def __init__(self, bus: DataBus, parent=None) -> None:
         super().__init__(bus, parent)
-        self.setWindowTitle("주식 차트")
         # 실시간 candle 구독
         bus.subscribe("candle.tick",   self,
                       lambda d: self._invoke_main("_on_tick_inv", d))
