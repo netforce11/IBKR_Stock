@@ -20,18 +20,18 @@ from shared.ui.panels.base_panel import BasePanel
 
 log = logging.getLogger(__name__)
 
-# ── 색상 상수 ────────────────────────────────────────────
-_BG         = "#0F1117"
-_BG_INPUT   = "#161B22"
-_BORDER     = "#30363D"
-_TEXT       = "#C9D1D9"
-_LABEL      = "#8B949E"
-_BTN_BUY    = ("background:#1864AB; color:#fff; font-weight:bold; font-size:14px;"
+# ── 색상 상수 (라이트 테마) ──────────────────────────────
+_BG         = "#F5F5F5"
+_BG_INPUT   = "#FFFFFF"
+_BORDER     = "#CDD0D5"
+_TEXT       = "#111827"
+_LABEL      = "#555E6B"
+_BTN_BUY    = ("background:#1565C0; color:#fff; font-weight:bold; font-size:14px;"
                "padding:8px; border:none; border-radius:4px;")
-_BTN_SELL   = ("background:#A61E1E; color:#fff; font-weight:bold; font-size:14px;"
+_BTN_SELL   = ("background:#C62828; color:#fff; font-weight:bold; font-size:14px;"
                "padding:8px; border:none; border-radius:4px;")
-_BTN_CANCEL = ("background:#21262D; color:#8B949E; font-size:11px;"
-               "padding:4px; border:1px solid #30363D; border-radius:3px;")
+_BTN_CANCEL = ("background:#E8ECF0; color:#555E6B; font-size:11px;"
+               "padding:4px; border:1px solid #CDD0D5; border-radius:3px;")
 _INPUT_STYLE = (f"QComboBox, QDoubleSpinBox, QSpinBox {{"
                 f"background:{_BG_INPUT}; color:{_TEXT}; border:1px solid {_BORDER};"
                 f"border-radius:3px; padding:2px 4px; font-size:12px;}}")
@@ -72,7 +72,7 @@ class OrderPanel(BasePanel):
         # ② 현재가 표시
         self._price_lbl = QLabel("현재가: --")
         self._price_lbl.setStyleSheet(
-            "color:#E6C419; font-weight:bold; font-size:14px;")
+            "color:#B45309; font-weight:bold; font-size:14px;")
         self._layout.addWidget(self._price_lbl)
 
         self._layout.addWidget(self._hline())
@@ -106,7 +106,7 @@ class OrderPanel(BasePanel):
         # 예상 금액
         self._est_lbl = QLabel("$0.00")
         self._est_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._est_lbl.setStyleSheet("color:#C9D1D9; font-size:12px; font-weight:bold;")
+        self._est_lbl.setStyleSheet("color:#111827; font-size:12px; font-weight:bold;")
         form.addRow("예상금액", self._est_lbl)
 
         self._layout.addLayout(form)

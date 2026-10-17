@@ -23,23 +23,24 @@ from shared.core.topics import Topics
 from shared.ui.panels.base_panel import BasePanel
 
 
-# ── 다크 테마 색상 ─────────────────────────────────────────
-BG_DARK    = "#0F1117"   # 패널 배경
-BG_ROW     = "#161B22"   # 테이블 행 배경
-BG_ROW_ALT = "#1C2128"   # 교차 행 (살짝 밝게)
-BG_HEADER  = "#21262D"   # 헤더 배경
+# ── 라이트 테마 색상 (밝은 배경 기반, 가독성 강화) ──────────
+BG_PANEL   = "#F5F5F5"   # 패널 배경 (연회색)
+BG_ROW     = "#FFFFFF"   # 테이블 기본 행
+BG_ROW_ALT = "#F0F4F8"   # 교차 행 (살짝 파란빛 회색)
+BG_HEADER  = "#E8ECF0"   # 헤더 배경
 
-ASK_TEXT   = "#FF6B6B"   # 매도 텍스트 (빨강)
-BID_TEXT   = "#4DABF7"   # 매수 텍스트 (파랑)
-FILL_TEXT  = "#FFD43B"   # 체결 텍스트 (노랑)
-INFO_TEXT  = "#A9E34B"   # 정보 텍스트 (연두)
-LABEL_DIM  = "#8B949E"   # 폼 레이블 (회색)
-PRICE_HL   = "#E6C419"   # 현재가 강조 (골드)
+# 밝은 배경에서 선명하게 보이는 진한 색상
+ASK_TEXT   = "#C0392B"   # 매도 (진한 빨강)
+BID_TEXT   = "#1565C0"   # 매수 (진한 파랑)
+FILL_TEXT  = "#7B4F00"   # 체결 (진한 amber — 노랑 대신)
+INFO_TEXT  = "#2E7D32"   # 정보 (진한 초록)
+LABEL_DIM  = "#555E6B"   # 폼 레이블 (중간 회색)
+PRICE_HL   = "#B45309"   # 현재가 강조 (진한 오렌지/골드)
 
-BORDER_ASK  = "#6E2B2B"
-BORDER_BID  = "#1B4A6E"
-BORDER_FILL = "#6E5A1B"
-BORDER_INFO = "#3A6E1B"
+BORDER_ASK  = "#E57373"   # 매도 테두리 (연한 빨강)
+BORDER_BID  = "#64B5F6"   # 매수 테두리 (연한 파랑)
+BORDER_FILL = "#FFB300"   # 체결 테두리 (amber)
+BORDER_INFO = "#81C784"   # 정보 테두리 (연한 초록)
 
 _ROWS = 10
 
@@ -50,29 +51,30 @@ def _table_style(text_color: str, border_color: str) -> str:
             background-color: {BG_ROW};
             alternate-background-color: {BG_ROW_ALT};
             color: {text_color};
-            gridline-color: #2D333B;
+            gridline-color: #D0D7DE;
             border: none;
             font-size: 12px;
+            font-weight: bold;
         }}
         QTableWidget::item:selected {{
-            background-color: #2D3748;
+            background-color: #DBEAFE;
             color: {text_color};
         }}
         QHeaderView::section {{
             background-color: {BG_HEADER};
-            color: {text_color};
+            color: #333;
             border: none;
-            border-bottom: 1px solid {border_color};
+            border-bottom: 2px solid {border_color};
             padding: 3px;
             font-weight: bold;
             font-size: 11px;
         }}
         QScrollBar:vertical {{
-            background: {BG_DARK};
+            background: #E8ECF0;
             width: 6px;
         }}
         QScrollBar::handle:vertical {{
-            background: #444C56;
+            background: #9CA3AF;
             border-radius: 3px;
         }}
     """
@@ -81,7 +83,7 @@ def _table_style(text_color: str, border_color: str) -> str:
 def _frame_style(border_color: str) -> str:
     return f"""
         QFrame#sectionFrame {{
-            background-color: {BG_DARK};
+            background-color: {BG_PANEL};
             border: 1px solid {border_color};
             border-radius: 4px;
         }}
@@ -96,7 +98,7 @@ class OrderbookPanel(BasePanel):
     def __init__(self, symbol: str, bus: DataBus, parent=None) -> None:
         super().__init__(bus, parent)
         self._symbol = symbol.upper()
-        self.setStyleSheet(f"background-color: {BG_DARK};")
+        self.setStyleSheet(f"background-color: {BG_PANEL};")
         self._build_ui()
 
         bus.subscribe(Topics.stock_orderbook(self._symbol), self,
@@ -192,15 +194,15 @@ class OrderbookPanel(BasePanel):
             )
             return lb
 
-        def _value(txt: str = "--", color: str = "#C9D1D9") -> QLabel:
+        def _value(txt: str = "--", color: str = "#1A1A1A") -> QLabel:
             lb = QLabel(txt)
             lb.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             lb.setStyleSheet(f"color: {color}; font-size: 12px;")
             return lb
 
         # 종목
-        self._lbl_sym = _label(self._symbol, "#E6EDF3", bold=True)
-        self._lbl_sym.setStyleSheet("color:#E6EDF3; font-size:14px; font-weight:bold;")
+        self._lbl_sym = _label(self._symbol, "#111827", bold=True)
+        self._lbl_sym.setStyleSheet("color:#111827; font-size:14px; font-weight:bold;")
         g.addWidget(self._lbl_sym, 0, 0, 1, 2)
 
         # 구분선
@@ -211,7 +213,7 @@ class OrderbookPanel(BasePanel):
         self._lbl_price = QLabel("--")
         self._lbl_price.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._lbl_price.setStyleSheet(
-            f"color: {PRICE_HL}; font-size: 18px; font-weight: bold;")
+            f"color: {PRICE_HL}; font-size: 20px; font-weight: bold; letter-spacing: 0.5px;")
         g.addWidget(self._lbl_price, 2, 1)
 
         g.addWidget(self._hline("#2D333B"), 3, 0, 1, 2)
@@ -254,10 +256,10 @@ class OrderbookPanel(BasePanel):
         # 타이틀 바
         hdr = QLabel(title)
         hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hdr.setFixedHeight(22)
+        hdr.setFixedHeight(24)
         hdr.setStyleSheet(
             f"color: {title_color}; background: {BG_HEADER};"
-            f"border-bottom: 1px solid {border};"
+            f"border-bottom: 2px solid {border};"
             f"font-size: 11px; font-weight: bold; letter-spacing: 1px;"
         )
         lay.addWidget(hdr)
