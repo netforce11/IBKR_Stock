@@ -21,6 +21,7 @@ from shared.ui.layout_manager import PanelLayoutManager
 from core.engine import TradingEngine
 from ui.panels.orderbook_panel import OrderbookPanel
 from ui.panels.portfolio_panel import PortfolioPanel
+from ui.panels.order_panel import OrderPanel
 
 log = logging.getLogger(__name__)
 
@@ -75,13 +76,17 @@ class MainWindow(QMainWindow):
         self._act_orderbook  = QAction("호가창",    self, checkable=True, checked=True)
         self._act_portfolio  = QAction("포트폴리오", self, checkable=True, checked=True)
         self._act_chart      = QAction("차트",      self, checkable=True, checked=True)
+        self._act_order      = QAction("주문",      self, checkable=True, checked=True)
         self._act_orderbook.triggered.connect(
             lambda v: self._layout_mgr.show_panel("orderbook", v))
         self._act_portfolio.triggered.connect(
             lambda v: self._layout_mgr.show_panel("portfolio", v))
         self._act_chart.triggered.connect(
             lambda v: self._layout_mgr.show_panel("stock_chart", v))
-        for act in (self._act_orderbook, self._act_portfolio, self._act_chart):
+        self._act_order.triggered.connect(
+            lambda v: self._layout_mgr.show_panel("order", v))
+        for act in (self._act_orderbook, self._act_portfolio,
+                    self._act_chart, self._act_order):
             view_menu.addAction(act)
 
         # 레이아웃 메뉴
@@ -168,6 +173,11 @@ class MainWindow(QMainWindow):
         self._pf_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._pf_panel, title="포트폴리오")
 
+        # 주문 패널
+        self._order_panel = OrderPanel(self._cmd_queue, self._bus)
+        self._order_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._order_panel, title="주문")
+
         # 차트 (pyqtgraph 없으면 skip)
         try:
             from ui.panels.chart_panel import StockChartPanel
@@ -201,9 +211,13 @@ class MainWindow(QMainWindow):
         top_h   = mdi_h // 2
         bot_h   = mdi_h - top_h - 8
 
-        self._layout_mgr.place("orderbook",   0,      0,     left_w,  mdi_h)
-        self._layout_mgr.place("portfolio",   left_w+8, 0,   right_w, top_h)
-        self._layout_mgr.place("stock_chart", left_w+8, top_h+8, right_w, bot_h)
+        order_w  = 280
+        chart_w  = right_w - order_w - 8
+
+        self._layout_mgr.place("orderbook",   0,                    0,        left_w,  mdi_h)
+        self._layout_mgr.place("order",       left_w+8,             0,        order_w, top_h)
+        self._layout_mgr.place("portfolio",   left_w+8+order_w+8,   0,        chart_w, top_h)
+        self._layout_mgr.place("stock_chart", left_w+8,             top_h+8,  right_w, bot_h)
 
         if save:
             self._layout_mgr.save()

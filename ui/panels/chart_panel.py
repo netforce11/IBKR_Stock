@@ -48,11 +48,18 @@ class StockChartPanel(MinuteChartPanel):
 
     def __init__(self, bus: DataBus, parent=None) -> None:
         super().__init__(bus, parent)
+        self._indicators: dict[str, float] = {}
+
         # 실시간 candle 구독
         bus.subscribe("candle.tick",   self,
                       lambda d: self._invoke_main("_on_tick_inv", d))
         bus.subscribe("candle.closed", self,
                       lambda d: self._invoke_main("_on_closed_inv", d))
+
+        # 지표 구독 — CalcProcess가 publish하는 토픽
+        for ind in ("sma20", "ema9", "rsi14"):
+            bus.subscribe(Topics.indicator("*", ind), self,
+                          lambda d, i=ind: self._invoke_main("_on_indicator", d))
 
     def _make_minute_loader(self, symbol: str, target_date: date):
         return IBKRMinuteLoader(symbol, target_date)
@@ -67,6 +74,31 @@ class StockChartPanel(MinuteChartPanel):
     @pyqtSlot(object)
     def _on_closed_inv(self, data: dict) -> None:
         self.on_candle_closed(data)
+
+    from PyQt6.QtCore import pyqtSlot as _slot
+
+    @_slot(object)
+    def _on_indicator(self, data: dict) -> None:
+        """CalcProcess → DataBus → 차트 사이드바 지표 갱신"""
+        ind  = data.get("indicator", "")
+        val  = data.get("value", 0.0)
+        sym  = data.get("symbol", "").upper()
+        self._indicators[ind] = val
+        self._update_indicator_labels()
+
+    def _update_indicator_labels(self) -> None:
+        """MinuteChartPanel status label에 지표값 표시"""
+        parts = []
+        if "sma20" in self._indicators:
+            parts.append(f"SMA20: {self._indicators['sma20']:.2f}")
+        if "ema9" in self._indicators:
+            parts.append(f"EMA9: {self._indicators['ema9']:.2f}")
+        if "rsi14" in self._indicators:
+            rsi = self._indicators["rsi14"]
+            flag = " ▲과매수" if rsi > 70 else (" ▼과매도" if rsi < 30 else "")
+            parts.append(f"RSI14: {rsi:.1f}{flag}")
+        if parts:
+            self._set_status("  |  ".join(parts))
 
     def register_shortcuts(self) -> list:
         base = super().register_shortcuts()
