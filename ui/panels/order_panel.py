@@ -21,9 +21,20 @@ from shared.ui.panels.base_panel import BasePanel
 log = logging.getLogger(__name__)
 
 # ── 색상 상수 ────────────────────────────────────────────
-_BTN_BUY  = "background:#1971C2; color:#fff; font-weight:bold; font-size:14px; padding:8px;"
-_BTN_SELL = "background:#C92A2A; color:#fff; font-weight:bold; font-size:14px; padding:8px;"
-_BTN_CANCEL = "background:#444; color:#ccc; font-size:11px; padding:4px;"
+_BG         = "#0F1117"
+_BG_INPUT   = "#161B22"
+_BORDER     = "#30363D"
+_TEXT       = "#C9D1D9"
+_LABEL      = "#8B949E"
+_BTN_BUY    = ("background:#1864AB; color:#fff; font-weight:bold; font-size:14px;"
+               "padding:8px; border:none; border-radius:4px;")
+_BTN_SELL   = ("background:#A61E1E; color:#fff; font-weight:bold; font-size:14px;"
+               "padding:8px; border:none; border-radius:4px;")
+_BTN_CANCEL = ("background:#21262D; color:#8B949E; font-size:11px;"
+               "padding:4px; border:1px solid #30363D; border-radius:3px;")
+_INPUT_STYLE = (f"QComboBox, QDoubleSpinBox, QSpinBox {{"
+                f"background:{_BG_INPUT}; color:{_TEXT}; border:1px solid {_BORDER};"
+                f"border-radius:3px; padding:2px 4px; font-size:12px;}}")
 
 
 class OrderPanel(BasePanel):
@@ -35,6 +46,11 @@ class OrderPanel(BasePanel):
         super().__init__(bus, parent)
         self._cmd_queue = cmd_queue
         self._last_price: float = 0.0
+        self.setStyleSheet(
+            f"background:{_BG}; color:{_TEXT};"
+            f"QLabel {{ color:{_LABEL}; font-size:11px; }}"
+            + _INPUT_STYLE
+        )
         self._build_ui()
 
         # 현재가 구독 → 가격 필드 자동 채움
@@ -55,7 +71,8 @@ class OrderPanel(BasePanel):
 
         # ② 현재가 표시
         self._price_lbl = QLabel("현재가: --")
-        self._price_lbl.setStyleSheet("color:#FFD43B; font-weight:bold;")
+        self._price_lbl.setStyleSheet(
+            "color:#E6C419; font-weight:bold; font-size:14px;")
         self._layout.addWidget(self._price_lbl)
 
         self._layout.addWidget(self._hline())
@@ -89,6 +106,7 @@ class OrderPanel(BasePanel):
         # 예상 금액
         self._est_lbl = QLabel("$0.00")
         self._est_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._est_lbl.setStyleSheet("color:#C9D1D9; font-size:12px; font-weight:bold;")
         form.addRow("예상금액", self._est_lbl)
 
         self._layout.addLayout(form)
@@ -137,7 +155,7 @@ class OrderPanel(BasePanel):
     def _hline() -> QFrame:
         f = QFrame()
         f.setFrameShape(QFrame.Shape.HLine)
-        f.setStyleSheet("color:#444;")
+        f.setStyleSheet("color:#30363D; background:#30363D; max-height:1px;")
         return f
 
     # ── 이벤트 핸들러 ────────────────────────────────────

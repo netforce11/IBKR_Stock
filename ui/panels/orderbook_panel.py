@@ -12,8 +12,8 @@
 from __future__ import annotations
 from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem,
-    QLabel, QWidget, QGridLayout,
-    QHeaderView, QFrame,
+    QLabel, QWidget, QHBoxLayout, QVBoxLayout,
+    QHeaderView, QFrame, QSplitter, QSizePolicy,
 )
 from PyQt6.QtCore import pyqtSlot, Qt
 from PyQt6.QtGui import QColor, QFont
@@ -23,153 +23,248 @@ from shared.core.topics import Topics
 from shared.ui.panels.base_panel import BasePanel
 
 
-# ── 색상 상수 ───────────────────────────────────────────
-ASK_COLOR  = QColor("#FF6B6B")   # 매도 (빨강 계열)
-BID_COLOR  = QColor("#4DABF7")   # 매수 (파랑 계열)
-FILL_COLOR = QColor("#FFD43B")   # 체결 (노랑 계열)
-INFO_COLOR = QColor("#A9E34B")   # 정보 (초록 계열)
+# ── 다크 테마 색상 ─────────────────────────────────────────
+BG_DARK    = "#0F1117"   # 패널 배경
+BG_ROW     = "#161B22"   # 테이블 행 배경
+BG_ROW_ALT = "#1C2128"   # 교차 행 (살짝 밝게)
+BG_HEADER  = "#21262D"   # 헤더 배경
 
-_ROWS = 10   # 매도/매수 각 10호가
+ASK_TEXT   = "#FF6B6B"   # 매도 텍스트 (빨강)
+BID_TEXT   = "#4DABF7"   # 매수 텍스트 (파랑)
+FILL_TEXT  = "#FFD43B"   # 체결 텍스트 (노랑)
+INFO_TEXT  = "#A9E34B"   # 정보 텍스트 (연두)
+LABEL_DIM  = "#8B949E"   # 폼 레이블 (회색)
+PRICE_HL   = "#E6C419"   # 현재가 강조 (골드)
+
+BORDER_ASK  = "#6E2B2B"
+BORDER_BID  = "#1B4A6E"
+BORDER_FILL = "#6E5A1B"
+BORDER_INFO = "#3A6E1B"
+
+_ROWS = 10
+
+
+def _table_style(text_color: str, border_color: str) -> str:
+    return f"""
+        QTableWidget {{
+            background-color: {BG_ROW};
+            alternate-background-color: {BG_ROW_ALT};
+            color: {text_color};
+            gridline-color: #2D333B;
+            border: none;
+            font-size: 12px;
+        }}
+        QTableWidget::item:selected {{
+            background-color: #2D3748;
+            color: {text_color};
+        }}
+        QHeaderView::section {{
+            background-color: {BG_HEADER};
+            color: {text_color};
+            border: none;
+            border-bottom: 1px solid {border_color};
+            padding: 3px;
+            font-weight: bold;
+            font-size: 11px;
+        }}
+        QScrollBar:vertical {{
+            background: {BG_DARK};
+            width: 6px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: #444C56;
+            border-radius: 3px;
+        }}
+    """
+
+
+def _frame_style(border_color: str) -> str:
+    return f"""
+        QFrame#sectionFrame {{
+            background-color: {BG_DARK};
+            border: 1px solid {border_color};
+            border-radius: 4px;
+        }}
+    """
 
 
 class OrderbookPanel(BasePanel):
-    PANEL_ID    = "orderbook"
-    TITLE       = "호가창"
+    PANEL_ID     = "orderbook"
+    TITLE        = "호가창"
     DEFAULT_SIZE = (480, 600)
 
     def __init__(self, symbol: str, bus: DataBus, parent=None) -> None:
         super().__init__(bus, parent)
         self._symbol = symbol.upper()
+        self.setStyleSheet(f"background-color: {BG_DARK};")
         self._build_ui()
 
-        # DataBus 구독
         bus.subscribe(Topics.stock_orderbook(self._symbol), self,
                       lambda d: self._invoke_main("_on_book", d))
         bus.subscribe(Topics.stock_price(self._symbol), self,
                       lambda d: self._invoke_main("_on_price", d))
 
-    # ── UI 구성 ───────────────────────────────────────────
+    # ── UI 구성 ──────────────────────────────────────────
     def _build_ui(self) -> None:
-        # 최상위: 좌(호가) | 우(정보+체결)
-        from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QSplitter
         root = QHBoxLayout()
         root.setContentsMargins(4, 4, 4, 4)
         root.setSpacing(4)
         self._layout.addLayout(root)
 
-        # ── 좌측: 매도(위) + 매수(아래) ─────────────────
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        # 좌: 매도(위) / 매수(아래)
+        left_split = QSplitter(Qt.Orientation.Vertical)
+        left_split.setHandleWidth(3)
+        left_split.setStyleSheet("QSplitter::handle { background: #2D333B; }")
 
-        self._ask_table = self._make_book_table("매도 (Ask)", ASK_COLOR)
-        ask_wrap = self._titled("매 도", self._ask_table, ASK_COLOR)
-        left_splitter.addWidget(ask_wrap)
+        self._ask_table = self._make_table(ASK_TEXT, BORDER_ASK)
+        left_split.addWidget(self._section("매  도  Ask", self._ask_table, BORDER_ASK, ASK_TEXT))
 
-        self._bid_table = self._make_book_table("매수 (Bid)", BID_COLOR)
-        bid_wrap = self._titled("매 수", self._bid_table, BID_COLOR)
-        left_splitter.addWidget(bid_wrap)
+        self._bid_table = self._make_table(BID_TEXT, BORDER_BID)
+        left_split.addWidget(self._section("매  수  Bid", self._bid_table, BORDER_BID, BID_TEXT))
+        left_split.setSizes([1, 1])
 
-        left_splitter.setSizes([1, 1])   # 50:50 초기 비율
-        left_splitter.setHandleWidth(4)
+        # 우: 정보(위) / 체결(아래)
+        right_split = QSplitter(Qt.Orientation.Vertical)
+        right_split.setHandleWidth(3)
+        right_split.setStyleSheet("QSplitter::handle { background: #2D333B; }")
 
-        # ── 우측: 정보창(위) + 체결창(아래) ─────────────
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        info_widget = self._build_info_widget()
-        info_wrap = self._titled("정 보", info_widget, INFO_COLOR)
-        right_splitter.addWidget(info_wrap)
+        info_w = self._build_info()
+        right_split.addWidget(self._section("정  보", info_w, BORDER_INFO, INFO_TEXT))
 
         self._fill_table = self._make_fill_table()
-        fill_wrap = self._titled("체 결", self._fill_table, FILL_COLOR)
-        right_splitter.addWidget(fill_wrap)
+        right_split.addWidget(self._section("체  결", self._fill_table, BORDER_FILL, FILL_TEXT))
+        right_split.setSizes([2, 3])
 
-        right_splitter.setSizes([1, 2])   # 정보 1 : 체결 2
-        right_splitter.setHandleWidth(4)
+        # 좌/우 수평 분할
+        h_split = QSplitter(Qt.Orientation.Horizontal)
+        h_split.setHandleWidth(3)
+        h_split.setStyleSheet("QSplitter::handle { background: #2D333B; }")
+        h_split.addWidget(left_split)
+        h_split.addWidget(right_split)
+        h_split.setSizes([1, 1])
 
-        # 좌:우 = 1:1 (QSplitter로 조절 가능)
-        h_splitter = QSplitter(Qt.Orientation.Horizontal)
-        h_splitter.addWidget(left_splitter)
-        h_splitter.addWidget(right_splitter)
-        h_splitter.setSizes([1, 1])
-        h_splitter.setHandleWidth(4)
+        root.addWidget(h_split)
 
-        root.addWidget(h_splitter)
-
-    # ── 위젯 팩토리 ───────────────────────────────────────
-    def _make_book_table(self, _label: str, color: QColor) -> QTableWidget:
+    # ── 위젯 팩토리 ──────────────────────────────────────
+    def _make_table(self, text_color: str, border_color: str) -> QTableWidget:
         t = QTableWidget(_ROWS, 2)
-        t.setHorizontalHeaderLabels(["가격", "수량"])
+        t.setHorizontalHeaderLabels(["가  격", "수  량"])
         t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         t.verticalHeader().setVisible(False)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         t.setAlternatingRowColors(True)
-        t.setShowGrid(True)
-        # 헤더 색
-        t.horizontalHeader().setStyleSheet(
-            f"QHeaderView::section {{ color: {color.name()}; }}"
-        )
+        t.setShowGrid(False)
+        t.setStyleSheet(_table_style(text_color, border_color))
+        t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 행 높이 타이트하게
+        t.verticalHeader().setDefaultSectionSize(22)
         return t
 
     def _make_fill_table(self) -> QTableWidget:
         t = QTableWidget(0, 3)
-        t.setHorizontalHeaderLabels(["시간", "가격", "수량"])
+        t.setHorizontalHeaderLabels(["시  간", "가  격", "수  량"])
         t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         t.verticalHeader().setVisible(False)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.setAlternatingRowColors(True)
+        t.setShowGrid(False)
+        t.setStyleSheet(_table_style(FILL_TEXT, BORDER_FILL))
+        t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        t.verticalHeader().setDefaultSectionSize(22)
         return t
 
-    def _build_info_widget(self) -> QWidget:
+    def _build_info(self) -> QWidget:
         w = QWidget()
-        from PyQt6.QtWidgets import QFormLayout
-        lay = QFormLayout(w)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(4)
+        w.setStyleSheet(f"background: transparent;")
 
-        def _lbl(txt="--"):
-            l = QLabel(txt)
-            l.setAlignment(Qt.AlignmentFlag.AlignRight)
-            return l
+        from PyQt6.QtWidgets import QGridLayout
+        g = QGridLayout(w)
+        g.setContentsMargins(10, 8, 10, 8)
+        g.setSpacing(6)
+        g.setColumnStretch(1, 1)
 
-        self._lbl_price  = _lbl(); self._lbl_price.setStyleSheet(
-            "font-size:16px; font-weight:bold; color:#FFD43B;")
-        self._lbl_bid    = _lbl()
-        self._lbl_ask    = _lbl()
-        self._lbl_spread = _lbl()
-        self._lbl_sym    = QLabel(self._symbol)
-        self._lbl_sym.setStyleSheet("font-weight:bold;")
+        def _label(txt: str, color: str = LABEL_DIM, bold: bool = False) -> QLabel:
+            lb = QLabel(txt)
+            lb.setStyleSheet(
+                f"color: {color}; font-size: 11px;"
+                + (" font-weight: bold;" if bold else "")
+            )
+            return lb
 
-        lay.addRow("종목",   self._lbl_sym)
-        lay.addRow("현재가", self._lbl_price)
-        lay.addRow("매수1호가", self._lbl_bid)
-        lay.addRow("매도1호가", self._lbl_ask)
-        lay.addRow("스프레드",  self._lbl_spread)
+        def _value(txt: str = "--", color: str = "#C9D1D9") -> QLabel:
+            lb = QLabel(txt)
+            lb.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            lb.setStyleSheet(f"color: {color}; font-size: 12px;")
+            return lb
+
+        # 종목
+        self._lbl_sym = _label(self._symbol, "#E6EDF3", bold=True)
+        self._lbl_sym.setStyleSheet("color:#E6EDF3; font-size:14px; font-weight:bold;")
+        g.addWidget(self._lbl_sym, 0, 0, 1, 2)
+
+        # 구분선
+        g.addWidget(self._hline(BORDER_INFO), 1, 0, 1, 2)
+
+        # 현재가 (크게)
+        g.addWidget(_label("현재가"), 2, 0)
+        self._lbl_price = QLabel("--")
+        self._lbl_price.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._lbl_price.setStyleSheet(
+            f"color: {PRICE_HL}; font-size: 18px; font-weight: bold;")
+        g.addWidget(self._lbl_price, 2, 1)
+
+        g.addWidget(self._hline("#2D333B"), 3, 0, 1, 2)
+
+        # 매수1호가
+        g.addWidget(_label("매수1호가"), 4, 0)
+        self._lbl_bid = _value(color=BID_TEXT)
+        g.addWidget(self._lbl_bid, 4, 1)
+
+        # 매도1호가
+        g.addWidget(_label("매도1호가"), 5, 0)
+        self._lbl_ask = _value(color=ASK_TEXT)
+        g.addWidget(self._lbl_ask, 5, 1)
+
+        # 스프레드
+        g.addWidget(_label("스프레드"), 6, 0)
+        self._lbl_spread = _value(color=LABEL_DIM)
+        g.addWidget(self._lbl_spread, 6, 1)
+
+        g.setRowStretch(7, 1)  # 하단 여백
         return w
 
     @staticmethod
-    def _titled(title: str, widget: QWidget, color: QColor) -> QFrame:
-        """테두리 + 타이틀 프레임"""
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setStyleSheet(
-            f"QFrame {{ border: 1px solid {color.name()}; border-radius: 3px; }}"
-        )
-        from PyQt6.QtWidgets import QVBoxLayout
-        lay = QVBoxLayout(frame)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.setSpacing(2)
+    def _hline(color: str = "#2D333B") -> QFrame:
+        f = QFrame()
+        f.setFrameShape(QFrame.Shape.HLine)
+        f.setStyleSheet(f"color: {color}; background: {color}; max-height: 1px;")
+        return f
 
-        lbl = QLabel(title)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet(
-            f"color: {color.name()}; font-weight: bold; font-size: 11px;"
-            "border: none;"
+    def _section(self, title: str, widget: QWidget,
+                 border: str, title_color: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("sectionFrame")
+        frame.setStyleSheet(_frame_style(border))
+
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # 타이틀 바
+        hdr = QLabel(title)
+        hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hdr.setFixedHeight(22)
+        hdr.setStyleSheet(
+            f"color: {title_color}; background: {BG_HEADER};"
+            f"border-bottom: 1px solid {border};"
+            f"font-size: 11px; font-weight: bold; letter-spacing: 1px;"
         )
-        lay.addWidget(lbl)
+        lay.addWidget(hdr)
         lay.addWidget(widget)
         return frame
 
-    # ── DataBus 슬롯 ──────────────────────────────────────
+    # ── DataBus 슬롯 ─────────────────────────────────────
     @pyqtSlot(object)
     def _on_price(self, data: dict) -> None:
         price = data.get("price", 0.0)
@@ -180,31 +275,26 @@ class OrderbookPanel(BasePanel):
         self._lbl_ask.setText(f"${ask:,.2f}")
         spread = round(ask - bid, 4)
         self._lbl_spread.setText(f"${spread:.4f}")
-        # 상승/하락 색
-        # (이전가 비교는 추후 추가)
 
     @pyqtSlot(object)
     def _on_book(self, data: dict) -> None:
         asks = sorted(data.get("asks", []), key=lambda x: x[0])[:_ROWS]
         bids = sorted(data.get("bids", []), key=lambda x: x[0], reverse=True)[:_ROWS]
-
-        # 매도: 낮은 호가가 하단(행 9→0)에 가까이 오도록 역순 표시
-        asks_disp = list(reversed(asks))  # 높은 가격 위, 낮은 가격 아래
-        self._fill_book(self._ask_table, asks_disp, ASK_COLOR)
-        self._fill_book(self._bid_table, bids, BID_COLOR)
-
-        # 체결창에 현재 스프레드 대 추가 (mock: 최우선 호가 이용)
+        # 매도: 높은 호가가 위 (역순)
+        self._fill_book(self._ask_table, list(reversed(asks)), ASK_TEXT)
+        self._fill_book(self._bid_table, bids, BID_TEXT)
         self._add_fill_row(data)
 
-    def _fill_book(self, table: QTableWidget, rows: list, color: QColor) -> None:
+    def _fill_book(self, table: QTableWidget, rows: list, text_color: str) -> None:
         table.setRowCount(_ROWS)
+        color = QColor(text_color)
         for i in range(_ROWS):
             if i < len(rows):
                 price, qty = rows[i]
-                p_item = QTableWidgetItem(f"{price:.2f}")
+                p_item = QTableWidgetItem(f"{price:,.2f}")
                 q_item = QTableWidgetItem(f"{qty:,}")
-                p_item.setForeground(color)
-                q_item.setForeground(color)
+                for item in (p_item, q_item):
+                    item.setForeground(color)
                 p_item.setTextAlignment(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 q_item.setTextAlignment(
@@ -216,7 +306,6 @@ class OrderbookPanel(BasePanel):
                 table.setItem(i, 1, QTableWidgetItem(""))
 
     def _add_fill_row(self, data: dict) -> None:
-        """체결창에 mock 체결 1건 추가 (실제 브로커 연결 시 대체)"""
         import time, random
         bids = data.get("bids", [])
         if not bids:
@@ -225,23 +314,22 @@ class OrderbookPanel(BasePanel):
         qty   = random.randint(10, 500)
         t_str = time.strftime("%H:%M:%S")
 
-        row = self._fill_table.rowCount()
-        self._fill_table.insertRow(0)   # 최신 체결이 위로
-        for col, val in enumerate([t_str, f"{price:.2f}", str(qty)]):
+        self._fill_table.insertRow(0)
+        color = QColor(FILL_TEXT)
+        for col, val in enumerate([t_str, f"{price:,.2f}", f"{qty:,}"]):
             item = QTableWidgetItem(val)
-            item.setForeground(FILL_COLOR)
+            item.setForeground(color)
             item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
             self._fill_table.setItem(0, col, item)
 
-        # 최대 200행 유지
         if self._fill_table.rowCount() > 200:
             self._fill_table.removeRow(200)
 
-    # ── 단축키 추가 ───────────────────────────────────────
+    # ── 단축키 ───────────────────────────────────────────
     def register_shortcuts(self) -> list:
         return super().register_shortcuts() + [
-            ("Ctrl+R", self._clear_fills),  # 체결창 초기화
+            ("Ctrl+R", self._clear_fills),
         ]
 
     def _clear_fills(self) -> None:
