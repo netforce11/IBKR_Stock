@@ -57,6 +57,10 @@ class OrderPanel(BasePanel):
         bus.subscribe("stock.price.*", self,
                       lambda d: self._invoke_main("_on_price_any", d))
 
+        # 관심종목 선택 → 심볼 콤보 자동 전환
+        bus.subscribe(Topics.WATCHLIST_SELECT, self,
+                      lambda d: self._invoke_main("_on_watchlist_select", d))
+
     # ── UI 구성 ──────────────────────────────────────────
     def _build_ui(self) -> None:
         # ① 심볼 선택
@@ -178,6 +182,22 @@ class OrderPanel(BasePanel):
         # 가격 스핀박스가 0이면 현재가로 자동 채움
         if self._price_spin.value() == 0.0:
             self._price_spin.setValue(price)
+
+    # ── 관심종목 선택 → 심볼 자동 전환 ──────────────────
+    @pyqtSlot(object)
+    def _on_watchlist_select(self, data: dict) -> None:
+        sym = data.get("symbol", "").upper()
+        if not sym:
+            return
+        # 콤보박스에 없으면 추가
+        idx = self._sym_combo.findText(sym)
+        if idx < 0:
+            self._sym_combo.addItem(sym)
+            idx = self._sym_combo.count() - 1
+        self._sym_combo.setCurrentIndex(idx)
+        # 가격 초기화 (다음 tick에서 자동 채움)
+        self._price_spin.setValue(0.0)
+        self._price_lbl.setText("현재가: --")
 
     # ── 주문 발송 ────────────────────────────────────────
     def _place_order(self, side: str) -> None:

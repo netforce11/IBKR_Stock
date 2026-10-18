@@ -61,6 +61,10 @@ class StockChartPanel(MinuteChartPanel):
             bus.subscribe(Topics.indicator("*", ind), self,
                           lambda d, i=ind: self._invoke_main("_on_indicator", d))
 
+        # 관심종목 선택 → 차트 종목 전환
+        bus.subscribe(Topics.WATCHLIST_SELECT, self,
+                      lambda d: self._invoke_main("_on_watchlist_select", d))
+
     def _make_minute_loader(self, symbol: str, target_date: date):
         return IBKRMinuteLoader(symbol, target_date)
 
@@ -99,6 +103,15 @@ class StockChartPanel(MinuteChartPanel):
             parts.append(f"RSI14: {rsi:.1f}{flag}")
         if parts:
             self._set_status("  |  ".join(parts))
+
+    # ── 관심종목 선택 → 차트 종목 전환 ──────────────────
+    from PyQt6.QtCore import pyqtSlot as _pyqtSlot2
+
+    @_pyqtSlot2(object)
+    def _on_watchlist_select(self, data: dict) -> None:
+        sym = data.get("symbol", "").upper()
+        if sym and sym != getattr(self, "_symbol", ""):
+            self._set_symbol(sym)   # MinuteChartPanel의 종목 전환 메서드
 
     def register_shortcuts(self) -> list:
         base = super().register_shortcuts()

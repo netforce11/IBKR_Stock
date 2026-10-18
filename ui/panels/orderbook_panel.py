@@ -106,6 +106,10 @@ class OrderbookPanel(BasePanel):
         bus.subscribe(Topics.stock_price(self._symbol), self,
                       lambda d: self._invoke_main("_on_price", d))
 
+        # 관심종목 선택 → 종목 자동 전환
+        bus.subscribe(Topics.WATCHLIST_SELECT, self,
+                      lambda d: self._invoke_main("_on_watchlist_select", d))
+
     # ── UI 구성 ──────────────────────────────────────────
     def _build_ui(self) -> None:
         root = QHBoxLayout()
@@ -327,6 +331,43 @@ class OrderbookPanel(BasePanel):
 
         if self._fill_table.rowCount() > 200:
             self._fill_table.removeRow(200)
+
+    # ── 관심종목 선택 → 종목 전환 ────────────────────────
+    @pyqtSlot(object)
+    def _on_watchlist_select(self, data: dict) -> None:
+        sym = data.get("symbol", "").upper()
+        if sym and sym != self._symbol:
+            self.set_symbol(sym)
+
+    def set_symbol(self, symbol: str) -> None:
+        """호가창 종목 전환 — 기존 구독 해제 후 새 구독"""
+        new_sym = symbol.upper()
+        if new_sym == self._symbol:
+            return
+        # 기존 구독 해제
+        self._bus.unsubscribe(Topics.stock_orderbook(self._symbol), self)
+        self._bus.unsubscribe(Topics.stock_price(self._symbol), self)
+        # 종목 전환
+        self._symbol = new_sym
+        # 화면 초기화
+        self._clear_book()
+        self._fill_table.setRowCount(0)
+        if hasattr(self, "_sym_lbl"):
+            self._sym_lbl.setText(new_sym)
+        self.setWindowTitle(f"호가창 — {new_sym}")
+        # 새 구독
+        self._bus.subscribe(Topics.stock_orderbook(new_sym), self,
+                            lambda d: self._invoke_main("_on_book", d))
+        self._bus.subscribe(Topics.stock_price(new_sym), self,
+                            lambda d: self._invoke_main("_on_price", d))
+
+    def _clear_book(self) -> None:
+        for r in range(_ROWS):
+            for c in range(2):
+                for tbl in (self._ask_table, self._bid_table):
+                    item = tbl.item(r, c)
+                    if item:
+                        item.setText("")
 
     # ── 단축키 ───────────────────────────────────────────
     def register_shortcuts(self) -> list:

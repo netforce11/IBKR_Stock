@@ -30,6 +30,8 @@ from ui.panels.orderbook_panel import OrderbookPanel
 from ui.panels.portfolio_panel import PortfolioPanel
 from ui.panels.order_panel import OrderPanel
 from ui.panels.fill_history_panel import FillHistoryPanel
+from ui.panels.watchlist_panel import WatchlistPanel
+from core.watchlist_manager import WatchlistManager
 
 log = logging.getLogger(__name__)
 
@@ -299,6 +301,13 @@ class MainWindow(QMainWindow):
     # 패널 생성
     # ════════════════════════════════════════════════════
     def _build_panels(self) -> None:
+        # ── 관심종목 ──────────────────────────────────────
+        _data_dir = Path(CONFIG.get("data_dir", Path.home() / "trading_terminal" / "IBKR_Stock" / "data"))
+        self._wl_mgr = WatchlistManager(_data_dir)
+        self._wl_panel = WatchlistPanel(self._bus, self._wl_mgr, self._feed)
+        self._wl_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._wl_panel, title="관심종목")
+
         self._ob_panel = OrderbookPanel("AAPL", self._bus)
         self._ob_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._ob_panel, title="호가창 — AAPL")
@@ -323,7 +332,9 @@ class MainWindow(QMainWindow):
         except ImportError as e:
             log.warning("차트 패널 로드 실패 (pyqtgraph?): %s", e)
 
-        self._feed.subscribe("AAPL")
+        # 관심종목 마지막 선택 종목으로 기본 피드 구독
+        _last_sym = self._wl_mgr.last_symbol
+        self._feed.subscribe(_last_sym)
 
     # ════════════════════════════════════════════════════
     # 레이아웃 관리
@@ -354,11 +365,21 @@ class MainWindow(QMainWindow):
         fill_h  = 192
         chart_w = right_w - order_w - 8
 
-        self._layout_mgr.place("orderbook",    0,                  0,               left_w,  mdi_h)
-        self._layout_mgr.place("order",        left_w+8,           0,               order_w, top_h)
-        self._layout_mgr.place("portfolio",    left_w+8+order_w+8, 0,               chart_w, top_h)
-        self._layout_mgr.place("stock_chart",  left_w+8,           top_h+8,         right_w, bot_h - fill_h - 8)
-        self._layout_mgr.place("fill_history", left_w+8,           top_h+8+bot_h-fill_h, right_w, fill_h)
+        wl_w = 280   # 관심종목 너비
+        ob_w = left_w  # 호가창 너비 (기존과 동일)
+
+        # 왼쪽: 관심종목 | 호가창  (세로 전체)
+        self._layout_mgr.place("watchlist",    0,                     0,               wl_w,   mdi_h)
+        self._layout_mgr.place("orderbook",    wl_w+4,                0,               ob_w,   mdi_h)
+
+        right_x = wl_w + 4 + ob_w + 4
+        right_w2 = mdi_w - right_x
+        chart_w2 = right_w2 - order_w - 8
+
+        self._layout_mgr.place("order",        right_x,               0,               order_w, top_h)
+        self._layout_mgr.place("portfolio",    right_x+order_w+8,     0,               chart_w2, top_h)
+        self._layout_mgr.place("stock_chart",  right_x,               top_h+8,         right_w2, bot_h - fill_h - 8)
+        self._layout_mgr.place("fill_history", right_x,               top_h+8+bot_h-fill_h, right_w2, fill_h)
 
         if save:
             self._layout_mgr.save()
