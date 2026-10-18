@@ -114,25 +114,36 @@ class IBKRMinuteLoader(BaseMinuteLoader):
 
     @staticmethod
     def _bars_to_candles(bars: list) -> list:
-        """IBKR bar dict 리스트 → Candle 객체 리스트"""
+        """IBKR bar dict 리스트 → Candle 객체 리스트
+
+        IBKR 이상값 처리:
+          - formatDate=1 → "YYYYMMDD  HH:MM:SS" (공백 2개) 또는 "YYYYMMDD HH:MM:SS"
+          - volume=-1 → IBKR extended-hours 빈봉, 0으로 처리
+          - open/high/low/close ≤ 0 → 파싱 오류 또는 결측봉, 스킵
+          - high < low / high < open / high < close → 비정상봉, 스킵
+        """
         candles = []
         for b in bars:
             try:
-                ts_str = b.get("ts", "")
-                # IBKR formatDate=1 → "YYYYMMDD  HH:MM:SS" 또는 "YYYYMMDD HH:MM:SS"
-                ts_str = ts_str.strip()
-                try:
-                    dt = datetime.strptime(ts_str, "%Y%m%d  %H:%M:%S")
-                except ValueError:
-                    dt = datetime.strptime(ts_str, "%Y%m%d %H:%M:%S")
-                candles.append(Candle(
-                    int(dt.timestamp()),
-                    float(b.get("open",   0)),
-                    float(b.get("high",   0)),
-                    float(b.get("low",    0)),
-                    float(b.get("close",  0)),
-                    int(b.get("volume",   0)),
-                ))
+                ts_str = b.get("ts", "").strip()
+                # 공백 개수 무관하게 파싱
+                import re as _re
+                ts_clean = _re.sub(r"\s+", " ", ts_str)
+                dt = datetime.strptime(ts_clean, "%Y%m%d %H:%M:%S")
+
+                o = float(b.get("open",   0))
+                h = float(b.get("high",   0))
+                l = float(b.get("low",    0))
+                c = float(b.get("close",  0))
+                v = max(int(b.get("volume", 0)), 0)  # -1 → 0
+
+                # 비정상 OHLC 필터
+                if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+                    continue
+                if h < l or h < o or h < c or l > o or l > c:
+                    continue
+
+                candles.append(Candle(int(dt.timestamp()), o, h, l, c, v))
             except Exception:
                 continue
         return candles
