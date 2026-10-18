@@ -9,13 +9,12 @@ ui/panels/settings_panel.py
 """
 from __future__ import annotations
 import logging
-import sys
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,
-    QComboBox, QPushButton, QFormLayout, QFrame,
-    QMessageBox, QSizePolicy,
+    QComboBox, QPushButton, QFormLayout,
+    QMessageBox, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QColor, QFont
@@ -25,11 +24,8 @@ from config.settings import CONFIG
 
 log = logging.getLogger(__name__)
 
-# ── 스타일 상수 ─────────────────────────────────────────
-_PANEL_QSS = """
-QWidget#settings_root {
-    background: #F8FAFC;
-}
+# ── 스타일 ─────────────────────────────────────────────
+_QSS = """
 QGroupBox {
     font-size: 12px;
     font-weight: 600;
@@ -37,7 +33,7 @@ QGroupBox {
     border: 1px solid #CBD5E1;
     border-radius: 6px;
     margin-top: 8px;
-    padding-top: 4px;
+    padding-top: 6px;
     background: #FFFFFF;
 }
 QGroupBox::title {
@@ -49,6 +45,7 @@ QGroupBox::title {
 QLabel {
     color: #334155;
     font-size: 12px;
+    background: transparent;
 }
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     border: 1px solid #94A3B8;
@@ -62,59 +59,37 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border-color: #3B82F6;
 }
-QPushButton#save_btn {
-    background: #2563EB;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 5px;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 6px 20px;
-    min-height: 32px;
-}
-QPushButton#save_btn:hover   { background: #1D4ED8; }
-QPushButton#save_btn:pressed { background: #1E40AF; }
-QPushButton#reset_btn {
-    background: #F1F5F9;
-    color: #475569;
-    border: 1px solid #CBD5E1;
-    border-radius: 5px;
-    font-size: 12px;
-    padding: 5px 14px;
-    min-height: 32px;
-}
-QPushButton#reset_btn:hover { background: #E2E8F0; }
 """
 
 _NOTICE_QSS = (
-    "background:#FEF9C3; color:#713F12;"
+    "QLabel { background:#FEF9C3; color:#713F12;"
     " border:1px solid #FDE68A; border-radius:4px;"
-    " padding:4px 8px; font-size:11px;"
+    " padding:4px 8px; font-size:11px; }"
 )
 
 _BROKER_INFO = {
     "mock": "가상 브로커 — 실제 연결 없이 랜덤 시세로 동작합니다.",
-    "ibkr": "Interactive Brokers TWS/Gateway 연결이 필요합니다.\n"
-            "TWS Paper: 7497 · TWS Live: 7496 · Gateway Paper: 4002 · Gateway Live: 4001",
+    "ibkr": ("Interactive Brokers TWS/Gateway 접속이 필요합니다.\n"
+             "TWS Paper: 7497  ·  TWS Live: 7496\n"
+             "GW Paper: 4002  ·  GW Live: 4001"),
 }
 
 
 class SettingsPanel(BasePanel):
-    PANEL_ID    = "settings"
-    TITLE       = "⚙ 설정"
-    DEFAULT_SIZE = (420, 580)
+    PANEL_ID     = "settings"
+    TITLE        = "⚙ 설정"
+    DEFAULT_SIZE = (440, 600)
 
     def __init__(self, bus=None, parent=None):
         super().__init__(bus, parent)
-        self._changed = False
         self._build_ui()
         self._load_values()
 
     # ════════════════════════════════════════════════════
-    # UI 구성
+    # UI 구성  ← BasePanel._setup_ui()이 이미 self._layout 생성
     # ════════════════════════════════════════════════════
     def _build_ui(self) -> None:
-        # 라이트 팔레트 강제 (다크 테마 오버라이드)
+        # 라이트 팔레트 강제
         pal = QPalette()
         pal.setColor(QPalette.ColorRole.Window,     QColor("#F8FAFC"))
         pal.setColor(QPalette.ColorRole.WindowText, QColor("#0F172A"))
@@ -122,71 +97,90 @@ class SettingsPanel(BasePanel):
         pal.setColor(QPalette.ColorRole.Text,       QColor("#0F172A"))
         self.setPalette(pal)
         self.setAutoFillBackground(True)
+        self.setStyleSheet(_QSS)
 
-        root = QWidget(self)
-        root.setObjectName("settings_root")
-        root.setStyleSheet(_PANEL_QSS)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(root)
+        lay = self._layout   # BasePanel이 만든 레이아웃 재사용
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
 
-        lay = QVBoxLayout(root)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
-
-        # ── 제목 ─────────────────────────────────────
+        # 제목
         title = QLabel("설정")
         title.setFont(QFont("", 14, QFont.Weight.Bold))
-        title.setStyleSheet("color:#0F172A;")
+        title.setStyleSheet("color:#0F172A; font-size:14px; font-weight:700;")
         lay.addWidget(title)
 
-        # ── 재시작 안내 배너 ─────────────────────────
+        # 재시작 안내 배너
         self._notice = QLabel("⚠ 브로커 변경은 프로그램 재시작 후 적용됩니다.")
         self._notice.setStyleSheet(_NOTICE_QSS)
         self._notice.setWordWrap(True)
         self._notice.setVisible(False)
         lay.addWidget(self._notice)
 
-        # ── 브로커 섹션 ──────────────────────────────
-        lay.addWidget(self._build_broker_group())
+        # 스크롤 영역으로 감싸기 (화면이 작아도 스크롤 가능)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
 
-        # ── IBKR 접속 정보 섹션 ──────────────────────
-        lay.addWidget(self._build_ibkr_group())
+        inner = QWidget()
+        inner.setStyleSheet("background: #F8FAFC;")
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(0, 0, 4, 0)
+        inner_lay.setSpacing(10)
 
-        # ── 리스크 한도 섹션 ─────────────────────────
-        lay.addWidget(self._build_risk_group())
+        inner_lay.addWidget(self._build_broker_group())
+        inner_lay.addWidget(self._build_ibkr_group())
+        inner_lay.addWidget(self._build_risk_group())
+        inner_lay.addStretch()
 
-        lay.addStretch()
+        scroll.setWidget(inner)
+        lay.addWidget(scroll)
 
-        # ── 버튼 행 ──────────────────────────────────
+        # 버튼 행
         btn_lay = QHBoxLayout()
+        btn_lay.setContentsMargins(0, 4, 0, 0)
         btn_lay.addStretch()
 
         self._reset_btn = QPushButton("기본값 복원")
-        self._reset_btn.setObjectName("reset_btn")
+        self._reset_btn.setStyleSheet(
+            "QPushButton { font-size:12px; padding:5px 14px; min-height:30px;"
+            " border:1px solid #CBD5E1; border-radius:5px;"
+            " background:#F1F5F9; color:#475569; }"
+            "QPushButton:hover { background:#E2E8F0; }"
+        )
         self._reset_btn.clicked.connect(self._on_reset)
 
         self._save_btn = QPushButton("💾  저장")
-        self._save_btn.setObjectName("save_btn")
+        self._save_btn.setStyleSheet(
+            "QPushButton { font-size:13px; font-weight:600; padding:5px 20px;"
+            " min-height:30px; border:none; border-radius:5px;"
+            " background:#2563EB; color:#FFFFFF; }"
+            "QPushButton:hover { background:#1D4ED8; }"
+            "QPushButton:pressed { background:#1E40AF; }"
+        )
         self._save_btn.clicked.connect(self._on_save)
 
         btn_lay.addWidget(self._reset_btn)
         btn_lay.addWidget(self._save_btn)
         lay.addLayout(btn_lay)
 
+    # ── 섹션 그룹 ────────────────────────────────────────
     def _build_broker_group(self) -> QGroupBox:
         grp = QGroupBox("브로커")
         form = QFormLayout(grp)
         form.setSpacing(8)
+        form.setContentsMargins(10, 14, 10, 10)
 
         self._broker_combo = QComboBox()
-        self._broker_combo.addItems(["mock  —  가상 브로커 (개발/테스트)", "ibkr  —  Interactive Brokers"])
+        self._broker_combo.addItem("mock  —  가상 브로커 (개발/테스트)")
+        self._broker_combo.addItem("ibkr  —  Interactive Brokers")
         self._broker_combo.currentIndexChanged.connect(self._on_broker_changed)
-        form.addRow("브로커 선택:", self._broker_combo)
+        form.addRow("브로커:", self._broker_combo)
 
         self._broker_info = QLabel()
         self._broker_info.setWordWrap(True)
-        self._broker_info.setStyleSheet("color:#475569; font-size:11px; padding:2px 0;")
+        self._broker_info.setStyleSheet(
+            "color:#475569; font-size:11px; padding:2px 0; background:transparent;")
         form.addRow("", self._broker_info)
 
         return grp
@@ -195,35 +189,42 @@ class SettingsPanel(BasePanel):
         self._ibkr_grp = QGroupBox("IBKR 접속 정보")
         form = QFormLayout(self._ibkr_grp)
         form.setSpacing(8)
+        form.setContentsMargins(10, 14, 10, 10)
 
         self._ibkr_host = QLineEdit()
         self._ibkr_host.setPlaceholderText("127.0.0.1")
         form.addRow("Host:", self._ibkr_host)
 
+        # Port + 단축 버튼
+        port_lay = QHBoxLayout()
+        port_lay.setSpacing(4)
         self._ibkr_port = QSpinBox()
         self._ibkr_port.setRange(1, 65535)
-        self._ibkr_port.setGroupSeparatorShown(False)
-
-        port_lay = QHBoxLayout()
-        port_lay.setSpacing(6)
+        self._ibkr_port.setFixedWidth(80)
         port_lay.addWidget(self._ibkr_port)
-        for label, val in [("TWS Paper", 7497), ("TWS Live", 7496),
-                            ("GW Paper", 4002), ("GW Live", 4001)]:
+
+        _port_style = (
+            "QPushButton { font-size:10px; padding:2px 5px; min-height:22px;"
+            " border:1px solid #94A3B8; border-radius:3px;"
+            " background:#F1F5F9; color:#334155; }"
+            "QPushButton:hover { background:#E2E8F0; }"
+        )
+        for label, val in [("TWS Paper\n7497", 7497), ("TWS Live\n7496", 7496),
+                            ("GW Paper\n4002", 4002), ("GW Live\n4001", 4001)]:
             b = QPushButton(label)
-            b.setFixedHeight(24)
-            b.setStyleSheet(
-                "QPushButton { font-size:10px; padding:0 5px;"
-                " border:1px solid #94A3B8; border-radius:3px;"
-                " background:#F1F5F9; color:#334155; }"
-                "QPushButton:hover { background:#E2E8F0; }"
-            )
+            b.setStyleSheet(_port_style)
+            b.setFixedHeight(32)
             b.clicked.connect(lambda _, v=val: self._ibkr_port.setValue(v))
             port_lay.addWidget(b)
         port_lay.addStretch()
-        form.addRow("Port:", port_lay)
+
+        port_widget = QWidget()
+        port_widget.setLayout(port_lay)
+        form.addRow("Port:", port_widget)
 
         self._ibkr_cid = QSpinBox()
         self._ibkr_cid.setRange(1, 999)
+        self._ibkr_cid.setFixedWidth(80)
         form.addRow("Client ID:", self._ibkr_cid)
 
         return self._ibkr_grp
@@ -232,6 +233,7 @@ class SettingsPanel(BasePanel):
         grp = QGroupBox("리스크 한도")
         form = QFormLayout(grp)
         form.setSpacing(8)
+        form.setContentsMargins(10, 14, 10, 10)
 
         self._risk_loss = QDoubleSpinBox()
         self._risk_loss.setRange(0, 1_000_000)
@@ -261,18 +263,14 @@ class SettingsPanel(BasePanel):
     # 값 로드 / 저장
     # ════════════════════════════════════════════════════
     def _load_values(self) -> None:
-        """CONFIG → 위젯"""
-        # 브로커
         idx = 0 if CONFIG.broker == "mock" else 1
         self._broker_combo.setCurrentIndex(idx)
         self._update_broker_ui(CONFIG.broker)
 
-        # IBKR
         self._ibkr_host.setText(CONFIG.ibkr.host)
         self._ibkr_port.setValue(CONFIG.ibkr.port)
         self._ibkr_cid.setValue(CONFIG.ibkr.client_id)
 
-        # 리스크
         self._risk_loss.setValue(CONFIG.risk.max_daily_loss)
         self._risk_pos_size.setValue(CONFIG.risk.max_position_size)
         self._risk_total.setValue(CONFIG.risk.max_total_position)
@@ -283,43 +281,40 @@ class SettingsPanel(BasePanel):
         self._ibkr_grp.setEnabled(broker == "ibkr")
 
     # ════════════════════════════════════════════════════
-    # 이벤트 핸들러
+    # 이벤트
     # ════════════════════════════════════════════════════
     def _on_broker_changed(self, idx: int) -> None:
         broker = "mock" if idx == 0 else "ibkr"
         self._update_broker_ui(broker)
-        changed = (broker != CONFIG.broker)
-        self._notice.setVisible(changed)
+        self._notice.setVisible(broker != CONFIG.broker)
 
     def _on_save(self) -> None:
-        """위젯 → CONFIG → JSON 저장"""
         broker = "mock" if self._broker_combo.currentIndex() == 0 else "ibkr"
         broker_changed = (broker != CONFIG.broker)
 
-        # CONFIG 갱신
-        CONFIG.broker = broker
-        CONFIG.ibkr.host      = self._ibkr_host.text().strip() or "127.0.0.1"
-        CONFIG.ibkr.port      = self._ibkr_port.value()
-        CONFIG.ibkr.client_id = self._ibkr_cid.value()
+        CONFIG.broker             = broker
+        CONFIG.ibkr.host          = self._ibkr_host.text().strip() or "127.0.0.1"
+        CONFIG.ibkr.port          = self._ibkr_port.value()
+        CONFIG.ibkr.client_id     = self._ibkr_cid.value()
         CONFIG.risk.max_daily_loss      = self._risk_loss.value()
         CONFIG.risk.max_position_size   = self._risk_pos_size.value()
         CONFIG.risk.max_total_position  = self._risk_total.value()
         CONFIG.risk.max_daily_trades    = self._risk_trades.value()
 
         CONFIG.save()
+        self._notice.setVisible(False)
 
         if broker_changed:
             QMessageBox.information(
-                self, "설정 저장 완료",
-                f"브로커가 '{broker}'로 변경되었습니다.\n\n"
+                self, "설정 저장",
+                f"브로커가 '{broker}'로 변경되었습니다.\n"
                 "프로그램을 재시작하면 새 설정이 적용됩니다.",
-                QMessageBox.StandardButton.Ok,
             )
         else:
-            self._status("✅ 설정 저장 완료")
-
-        self._notice.setVisible(False)
-        log.info("설정 저장 완료 — broker=%s", broker)
+            if self._bus:
+                from shared.core.topics import Topics
+                self._bus.publish(Topics.SYSTEM_STATUS, {"msg": "✅ 설정 저장 완료"})
+        log.info("설정 저장 — broker=%s port=%d", broker, CONFIG.ibkr.port)
 
     def _on_reset(self) -> None:
         ret = QMessageBox.question(
@@ -329,14 +324,9 @@ class SettingsPanel(BasePanel):
         )
         if ret == QMessageBox.StandardButton.Yes:
             from config.settings import AppConfig
-            defaults = AppConfig()
-            CONFIG.broker = defaults.broker
-            CONFIG.ibkr   = defaults.ibkr
-            CONFIG.risk   = defaults.risk
+            d = AppConfig()
+            CONFIG.broker = d.broker
+            CONFIG.ibkr   = d.ibkr
+            CONFIG.risk   = d.risk
             self._load_values()
             self._notice.setVisible(False)
-
-    def _status(self, msg: str) -> None:
-        if self._bus:
-            from shared.core.topics import Topics
-            self._bus.publish(Topics.SYSTEM_STATUS, {"msg": msg})
