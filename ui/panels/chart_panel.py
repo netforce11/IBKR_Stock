@@ -57,9 +57,10 @@ class StockChartPanel(MinuteChartPanel):
                       lambda d: self._invoke_main("_on_closed_inv", d))
 
         # 지표 구독 — CalcProcess가 publish하는 토픽
-        for ind in ("sma20", "ema9", "rsi14"):
-            bus.subscribe(Topics.indicator("*", ind), self,
-                          lambda d, i=ind: self._invoke_main("_on_indicator", d))
+        # DataBus는 exact-match only → 종목별 exact 토픽으로 구독
+        # 심볼이 변경될 때는 _update_indicator_subs() 호출
+        self._indicator_names = ("sma20", "ema9", "rsi14")
+        self._update_indicator_subs(self._symbol)
 
         # 관심종목 선택 → 차트 종목 전환
         bus.subscribe(Topics.WATCHLIST_SELECT, self,
@@ -67,6 +68,22 @@ class StockChartPanel(MinuteChartPanel):
 
     def _make_minute_loader(self, symbol: str, target_date: date):
         return IBKRMinuteLoader(symbol, target_date)
+
+    def _update_indicator_subs(self, symbol: str, old_symbol: str | None = None) -> None:
+        """종목 변경 시 지표 구독을 old → new 로 교체"""
+        if old_symbol:
+            for ind in self._indicator_names:
+                self._bus.unsubscribe(Topics.indicator(old_symbol, ind), self)
+        for ind in self._indicator_names:
+            self._bus.subscribe(
+                Topics.indicator(symbol, ind), self,
+                lambda d, i=ind: self._invoke_main("_on_indicator", d))
+
+    def _set_symbol(self, symbol: str) -> None:
+        """MinuteChartPanel._set_symbol 오버라이드 — 지표 구독도 교체"""
+        old = getattr(self, "_symbol", None)
+        super()._set_symbol(symbol)
+        self._update_indicator_subs(symbol, old)
 
     # _invoke_main 슬롯
     from PyQt6.QtCore import pyqtSlot
