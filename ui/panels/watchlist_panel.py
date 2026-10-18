@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QPoint
-from PyQt6.QtGui import QFont, QColor, QAction
+from PyQt6.QtGui import QFont, QColor, QAction, QPalette
 
 from shared.core.bus import DataBus
 from shared.core.topics import Topics
@@ -61,18 +61,43 @@ QTabBar::tab:hover      { background:#D0D8E4; }
 
 _TABLE_QSS = f"""
 QTableWidget {{
-    background:{_BG_ROW}; alternate-background-color:{_BG_ALT};
-    color:{_TEXT}; gridline-color:{_BORDER};
-    border:none; font-size:12px;
+    background-color:{_BG_ROW};
+    alternate-background-color:{_BG_ALT};
+    color:{_TEXT};
+    gridline-color:{_BORDER};
+    border:none;
+    font-size:12px;
     selection-background-color:{_SEL_BG};
     selection-color:{_SEL_FG};
 }}
-QTableWidget::item {{ padding:3px 6px; }}
-QHeaderView::section {{
-    background:#E8ECF0; color:{_DIM};
-    font-size:11px; font-weight:600;
-    border:none; border-bottom:1px solid {_BORDER};
+QTableWidget::item {{
+    background-color:{_BG_ROW};
+    color:{_TEXT};
     padding:3px 6px;
+    border:none;
+}}
+QTableWidget::item:alternate {{
+    background-color:{_BG_ALT};
+    color:{_TEXT};
+}}
+QTableWidget::item:selected {{
+    background-color:{_SEL_BG};
+    color:{_SEL_FG};
+}}
+QHeaderView::section {{
+    background-color:#E8ECF0;
+    color:{_DIM};
+    font-size:11px;
+    font-weight:600;
+    border:none;
+    border-bottom:1px solid {_BORDER};
+    padding:3px 6px;
+}}
+QScrollBar:vertical {{
+    background:#E8ECF0; width:6px; border:none;
+}}
+QScrollBar::handle:vertical {{
+    background:#9CA3AF; border-radius:3px; min-height:20px;
 }}
 """
 
@@ -166,8 +191,11 @@ class _GroupPage(QWidget):
         sym_item.setFont(QFont("", 12, QFont.Weight.Bold))
         price_item = QTableWidgetItem("—")
         chg_item   = QTableWidgetItem("—")
+        bg = QColor(_BG_ROW if row % 2 == 0 else _BG_ALT)
         for item in (sym_item, price_item, chg_item):
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setBackground(bg)
+            item.setForeground(QColor(_TEXT))
         self._tbl.setItem(row, self.COL_SYM,   sym_item)
         self._tbl.setItem(row, self.COL_PRICE, price_item)
         self._tbl.setItem(row, self.COL_CHG,   chg_item)
@@ -186,8 +214,9 @@ class _GroupPage(QWidget):
     def _highlight_row(self, active_row: int) -> None:
         """선택 행 강조 (파랑), 나머지 초기화"""
         for r in range(self._tbl.rowCount()):
-            bg = QColor(_ACT_BG) if r == active_row else QColor()
-            fg = QColor(_ACT_FG) if r == active_row else QColor(_TEXT)
+            is_active = (r == active_row)
+            bg = QColor(_ACT_BG) if is_active else QColor(_BG_ROW if r % 2 == 0 else _BG_ALT)
+            fg = QColor(_ACT_FG) if is_active else QColor(_TEXT)
             for c in range(3):
                 item = self._tbl.item(r, c)
                 if item:
@@ -287,7 +316,16 @@ class WatchlistPanel(BasePanel):
         self._pages: Dict[str, _GroupPage] = {}   # group_name → page
         self._cur_symbol: str = wl_manager.last_symbol
 
-        self.setStyleSheet(f"background:{_BG};")
+        # 글로벌 다크 테마 덮어쓰기 — 명시적 라이트 팔레트 설정
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Window,     QColor(_BG))
+        pal.setColor(QPalette.ColorRole.Base,       QColor(_BG_ROW))
+        pal.setColor(QPalette.ColorRole.AlternateBase, QColor(_BG_ALT))
+        pal.setColor(QPalette.ColorRole.Text,       QColor(_TEXT))
+        pal.setColor(QPalette.ColorRole.WindowText, QColor(_TEXT))
+        self.setPalette(pal)
+        self.setAutoFillBackground(True)
+        self.setStyleSheet(f"WatchlistPanel {{ background:{_BG}; }}")
         self._build_ui()
 
         # 모든 그룹의 모든 종목 가격 구독
