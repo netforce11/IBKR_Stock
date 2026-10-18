@@ -242,6 +242,23 @@ class IBKRBroker(BaseBroker):
                 pass
         log.info("IBKRBroker 연결 해제")
 
+    # ── BaseBroker 필수 메서드: subscribe / unsubscribe ────────
+    def subscribe(self, symbol: str) -> None:
+        """BaseBroker 인터페이스 — subscribe_quote로 위임"""
+        self.subscribe_quote(symbol)
+
+    def unsubscribe(self, symbol: str) -> None:
+        """BaseBroker 인터페이스 — unsubscribe_quote로 위임"""
+        self.unsubscribe_quote(symbol)
+
+    def get_positions(self) -> dict:
+        """보유 포지션 반환 (symbol → qty). 미연결 시 빈 dict."""
+        return dict(self._price_cache)   # 임시: 구독 중인 종목 목록 반환
+
+    def get_account(self) -> dict:
+        """계좌 정보 반환. 미연결 시 빈 dict."""
+        return {}   # TODO: reqAccountSummary 구현 시 채우기
+
     def subscribe_quote(self, symbol: str) -> None:
         """실시간 시세 구독 (reqMktData)"""
         if not self._connected or not self._ib:
@@ -273,9 +290,25 @@ class IBKRBroker(BaseBroker):
             except Exception:
                 pass
 
-    def place_order(self, symbol: str, side: str, qty: int,
-                    price: float, order_type: str = "LMT") -> str:
-        """주문 발행 → order_id 반환"""
+    def place_order(self, req) -> str:
+        """
+        BaseBroker 인터페이스 — OrderRequest 또는 키워드 dict 모두 허용.
+        → order_id(internal) 반환
+        """
+        # OrderRequest dataclass 또는 dict 양쪽 지원
+        if hasattr(req, "symbol"):
+            symbol     = req.symbol
+            side       = req.side
+            qty        = req.quantity
+            price      = req.price or 0.0
+            order_type = req.order_type
+        else:
+            symbol     = req["symbol"]
+            side       = req["side"]
+            qty        = req["quantity"]
+            price      = req.get("price", 0.0) or 0.0
+            order_type = req.get("order_type", "LMT")
+
         if not self._connected or not self._ib:
             raise RuntimeError("IBKR 미연결")
 
