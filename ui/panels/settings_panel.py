@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QColor, QFont
 
-from shared.ui.base_panel import BasePanel
+from shared.ui.panels.base_panel import BasePanel
 from config.settings import CONFIG
 
 log = logging.getLogger(__name__)
