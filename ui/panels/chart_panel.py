@@ -2,31 +2,153 @@
 # MinuteChartPanel 상속 → IBKR 로더 주입
 
 from __future__ import annotations
-from datetime import date
+import threading
+import logging
+from datetime import date, datetime
 
 from shared.ui.chart.minute_chart_panel import MinuteChartPanel
 from shared.ui.chart.data_source import BaseMinuteLoader, Candle
 from shared.core.bus import DataBus
 from shared.core.topics import Topics
 
+log = logging.getLogger(__name__)
+
 
 class IBKRMinuteLoader(BaseMinuteLoader):
     """
     IBKR 분봉 로더.
-    실제 연결 전까지는 MockBroker의 가짜 데이터로 동작.
+    - broker가 주입된 경우 → 실제 reqHistoricalData 호출
+    - broker=None 또는 미연결 → Mock 랜덤 데이터 (개발/테스트용)
     """
+
+    def __init__(self, symbol: str, target_date: date, broker=None) -> None:
+        super().__init__(symbol, target_date)
+        self._broker = broker
+        self._done_event = threading.Event()
+        self._bars: list = []
+        self._fetch_error: str = ""
+
+    # ── IBKR 콜백 (IBKR 소켓 스레드에서 호출됨) ──────────────
+    def _on_bars_received(self, bars: list) -> None:
+        """request_historical 콜백 — bars: list[dict]"""
+        self._bars = bars
+        self._done_event.set()
+
+    # ── QThread.run() ────────────────────────────────────────
     def run(self) -> None:
-        import time, random
-        from datetime import datetime, timedelta
+        broker = self._broker
+        connected = getattr(broker, "_connected", False)
+
+        if broker is not None and connected:
+            self._run_real(broker)
+        else:
+            self._run_mock()
+
+    def _run_real(self, broker) -> None:
+        """실제 IBKR reqHistoricalData 호출"""
         try:
-            # Mock: 오전 9:30 ~ 16:00 분봉 생성
+            from datetime import date as _date
+            today = _date.today()
+            # 오늘이면 "1 D" (장 중 포함), 과거면 해당 날짜까지 조회
+            if self.target_date == today:
+                duration = "1 D"
+                end_dt   = ""          # 현재 시각까지
+            else:
+                duration = "1 D"
+                # endDateTime: "YYYYMMDD HH:MM:SS" 형식 (ET 기준 장 마감)
+                end_dt = self.target_date.strftime("%Y%m%d") + " 16:00:00"
+
+            # endDateTime 주입을 위해 request_historical 호출
+            # IBKRBroker.request_historical은 endDateTime="" (현재) 고정이므로
+            # 과거 날짜는 _ib.reqHistoricalData 직접 호출
+            if end_dt:
+                self._request_past(broker, end_dt)
+            else:
+                broker.request_historical(
+                    self.symbol, "1 D", "1 min",
+                    callback=self._on_bars_received
+                )
+
+            # 최대 30초 대기
+            if not self._done_event.wait(timeout=30):
+                self.error.emit(f"{self.symbol} 분봉 수신 타임아웃 (30s)")
+                return
+
+            if self._fetch_error:
+                self.error.emit(self._fetch_error)
+                return
+
+            candles = self._bars_to_candles(self._bars)
+            if candles:
+                self.loaded.emit(candles)
+            else:
+                # 데이터 없음 → Mock으로 폴백
+                log.warning("[ChartPanel] %s 실데이터 없음 → Mock 폴백", self.symbol)
+                self._run_mock()
+
+        except Exception as e:
+            log.exception("[ChartPanel] IBKR 분봉 오류")
+            self.error.emit(str(e))
+
+    def _request_past(self, broker, end_dt: str) -> None:
+        """과거 날짜 조회 — reqHistoricalData 직접 호출"""
+        try:
+            from broker.ibkr_broker import _make_stk_contract
+            req_id = broker._next_req_id
+            broker._next_req_id += 1
+            broker._hist_callbacks[req_id] = [self.symbol, [], self._on_bars_received]
+            c = _make_stk_contract(self.symbol)
+            broker._ib.reqHistoricalData(
+                req_id, c,
+                end_dt,   # endDateTime
+                "1 D",    # duration
+                "1 min",  # barSizeSetting
+                "TRADES",
+                1,        # useRTH
+                1,        # formatDate
+                False, []
+            )
+        except Exception as e:
+            self._fetch_error = str(e)
+            self._done_event.set()
+
+    @staticmethod
+    def _bars_to_candles(bars: list) -> list:
+        """IBKR bar dict 리스트 → Candle 객체 리스트"""
+        candles = []
+        for b in bars:
+            try:
+                ts_str = b.get("ts", "")
+                # IBKR formatDate=1 → "YYYYMMDD  HH:MM:SS" 또는 "YYYYMMDD HH:MM:SS"
+                ts_str = ts_str.strip()
+                try:
+                    dt = datetime.strptime(ts_str, "%Y%m%d  %H:%M:%S")
+                except ValueError:
+                    dt = datetime.strptime(ts_str, "%Y%m%d %H:%M:%S")
+                candles.append(Candle(
+                    int(dt.timestamp()),
+                    float(b.get("open",   0)),
+                    float(b.get("high",   0)),
+                    float(b.get("low",    0)),
+                    float(b.get("close",  0)),
+                    int(b.get("volume",   0)),
+                ))
+            except Exception:
+                continue
+        return candles
+
+    def _run_mock(self) -> None:
+        """개발/테스트용 Mock 랜덤 분봉 데이터"""
+        import random
+        from datetime import timedelta
+        try:
             candles = []
             start = datetime.combine(
                 self.target_date,
                 datetime.strptime("09:30", "%H:%M").time()
             )
             price = random.uniform(150, 200)
-            for i in range(390):   # 6.5시간 × 60분
+            for i in range(390):
                 dt = start + timedelta(minutes=i)
                 o  = price
                 h  = o + random.uniform(0, 1.5)
@@ -46,8 +168,9 @@ class StockChartPanel(MinuteChartPanel):
     TITLE = "주식 차트"
     DEFAULT_SIZE = (800, 500)
 
-    def __init__(self, bus: DataBus, parent=None) -> None:
+    def __init__(self, bus: DataBus, broker=None, parent=None) -> None:
         super().__init__(bus, parent)
+        self._broker = broker          # IBKRBroker 또는 None
         self._indicators: dict[str, float] = {}
 
         # 실시간 candle 구독
@@ -57,8 +180,6 @@ class StockChartPanel(MinuteChartPanel):
                       lambda d: self._invoke_main("_on_closed_inv", d))
 
         # 지표 구독 — CalcProcess가 publish하는 토픽
-        # DataBus는 exact-match only → 종목별 exact 토픽으로 구독
-        # 심볼이 변경될 때는 _update_indicator_subs() 호출
         self._indicator_names = ("sma20", "ema9", "rsi14")
         self._update_indicator_subs(self._symbol)
 
@@ -66,8 +187,12 @@ class StockChartPanel(MinuteChartPanel):
         bus.subscribe(Topics.WATCHLIST_SELECT, self,
                       lambda d: self._invoke_main("_on_watchlist_select", d))
 
+        # 브로커 연결 완료 → 차트 자동 갱신
+        bus.subscribe(Topics.BROKER_CONNECTED, self,
+                      lambda d: self._invoke_main("_on_broker_connected", d))
+
     def _make_minute_loader(self, symbol: str, target_date: date):
-        return IBKRMinuteLoader(symbol, target_date)
+        return IBKRMinuteLoader(symbol, target_date, broker=self._broker)
 
     def _update_indicator_subs(self, symbol: str, old_symbol: str | None = None) -> None:
         """종목 변경 시 지표 구독을 old → new 로 교체"""
@@ -129,6 +254,15 @@ class StockChartPanel(MinuteChartPanel):
         sym = data.get("symbol", "").upper()
         if sym and sym != getattr(self, "_symbol", ""):
             self._set_symbol(sym)   # MinuteChartPanel의 종목 전환 메서드
+
+    @_pyqtSlot2(object)
+    def _on_broker_connected(self, data: dict) -> None:
+        """브로커 연결 완료 → 오늘 날짜로 실데이터 차트 갱신"""
+        from datetime import date as _date
+        from PyQt6.QtCore import QDate
+        d = _date.today()
+        self._calendar.setSelectedDate(QDate(d.year, d.month, d.day))
+        self._refresh()
 
     def register_shortcuts(self) -> list:
         base = super().register_shortcuts()

@@ -346,7 +346,7 @@ class MainWindow(QMainWindow):
 
         try:
             from ui.panels.chart_panel import StockChartPanel
-            self._chart_panel = StockChartPanel(self._bus)
+            self._chart_panel = StockChartPanel(self._bus, broker=self._broker)
             self._chart_panel.set_shortcut_manager(self._shortcut_mgr)
             self._layout_mgr.add(self._chart_panel, title="차트")
         except ImportError as e:
