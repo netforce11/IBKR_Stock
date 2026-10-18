@@ -278,25 +278,19 @@ def _bars_to_candles(bars: list, daily: bool = False) -> list:
 # 패널
 # ══════════════════════════════════════════════════════════════
 class StockChartPanel(MinuteChartPanel):
-    """IBKR_Stock 전용 차트 패널"""
-    PANEL_ID     = "stock_chart"
-    TITLE        = "주식 차트"
-    DEFAULT_SIZE = (800, 500)
+    """IBKR_Stock 전용 차트 패널.
+    심볼·날짜는 DataBus(WATCHLIST_SELECT / CHART_DATE_SELECT)로만 제어.
+    사이드바 완전 제거 → 차트가 패널 전체 차지.
+    """
+    PANEL_ID      = "stock_chart"
+    TITLE         = "주식 차트"
+    DEFAULT_SIZE  = (800, 500)
+    _SHOW_SIDEBAR = False   # 사이드바 빌드 자체를 건너뜀
 
     def __init__(self, bus: DataBus, broker=None, parent=None) -> None:
         super().__init__(bus, parent)
         self._broker = broker
         self._indicators: dict[str, float] = {}
-
-        # 사이드바(심볼 입력·캘린더)는 관심종목 패널이 담당 → 완전 숨김
-        # 차트 영역이 패널 전체를 채우도록 splitter 비율 조정
-        if hasattr(self, "_splitter"):
-            # 사이드바 위젯(index 0) 숨김 + 최소 크기 0
-            sidebar = self._splitter.widget(0)
-            if sidebar:
-                sidebar.setVisible(False)
-                sidebar.setMaximumWidth(0)
-            self._splitter.setSizes([0, 9999])
 
         # 실시간 candle 구독
         bus.subscribe("candle.tick",   self,
