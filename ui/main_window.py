@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 
-from config.settings import CONFIG, LAYOUT_FILE
+from config.settings import CONFIG, LAYOUT_FILE, DATA_DIR
 from shared.core.bus import get_bus
 from shared.core.topics import Topics
 from shared.core.risk_manager import RiskManager
@@ -301,8 +301,7 @@ class MainWindow(QMainWindow):
     # ════════════════════════════════════════════════════
     def _build_panels(self) -> None:
         # ── 관심종목 ──────────────────────────────────────
-        _data_dir = Path(CONFIG.get("data_dir", Path.home() / "trading_terminal" / "IBKR_Stock" / "data"))
-        self._wl_mgr = WatchlistManager(_data_dir)
+        self._wl_mgr = WatchlistManager(DATA_DIR)
         self._wl_panel = WatchlistPanel(self._bus, self._wl_mgr, self._feed)
         self._wl_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._wl_panel, title="관심종목")
