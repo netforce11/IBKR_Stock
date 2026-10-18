@@ -287,9 +287,8 @@ class MainWindow(QMainWindow):
 
         self._build_panels()
 
-        # 저장된 레이아웃 복원 → 없으면 기본 배치
-        if not self._layout_mgr.restore():
-            self._reset_layout(save=False)
+        # 저장된 레이아웃 복원 → 없으면 빈 화면 (패널은 숨긴 채 대기)
+        self._layout_mgr.restore()   # 파일 없으면 모두 hide 상태 유지
 
         # 즐겨찾기 복원 (패널 등록 후에 해야 제목 조회 가능)
         self._load_favorites()
@@ -403,8 +402,9 @@ class MainWindow(QMainWindow):
             self._layout_mgr.restore(sf)
             self._status_bar.showMessage(f"화면 {slot} 복원", 2000)
         else:
-            self._reset_layout(save=False)
-            self._status_bar.showMessage(f"화면 {slot} — 새 레이아웃", 2000)
+            # 새 슬롯: 모든 패널 숨김 → 사용자가 직접 배치
+            self._layout_mgr.hide_all()
+            self._status_bar.showMessage(f"화면 {slot} — 빈 화면 (패널찾기로 추가)", 2000)
 
     # ════════════════════════════════════════════════════
     # 패널 찾기 다이얼로그
