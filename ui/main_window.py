@@ -31,6 +31,7 @@ from ui.panels.portfolio_panel import PortfolioPanel
 from ui.panels.order_panel import OrderPanel
 from ui.panels.fill_history_panel import FillHistoryPanel
 from ui.panels.watchlist_panel import WatchlistPanel
+from ui.panels.settings_panel import SettingsPanel
 from core.watchlist_manager import WatchlistManager
 from ui.status_bar_widget import HtsStatusBar
 
@@ -130,6 +131,7 @@ class MainWindow(QMainWindow):
             ("stock_chart",  "차트"),
             ("order",        "주문"),
             ("fill_history", "체결내역"),
+            ("settings",     "⚙ 설정"),
         ]
         self._view_actions: dict[str, QAction] = {}
         for pid, label in _panel_meta:
@@ -241,6 +243,18 @@ class MainWindow(QMainWindow):
         gear_btn.clicked.connect(self._show_fav_manager)
         self._gear_action = tb.addWidget(gear_btn)
 
+        settings_btn = QToolButton(self)
+        settings_btn.setText("⚙ 설정")
+        settings_btn.setToolTip("브로커·리스크·접속 설정")
+        settings_btn.setStyleSheet(
+            "QToolButton { min-height:24px; font-size:12px;"
+            " border:1px solid #93C5FD; border-radius:4px;"
+            " padding:0 8px; background:#DBEAFE; color:#1E3A5F; margin:1px 2px; }"
+            "QToolButton:hover { background:#BFDBFE; }"
+        )
+        settings_btn.clicked.connect(self._open_settings)
+        tb.addWidget(settings_btn)
+
     # ════════════════════════════════════════════════════
     # 4단계 부팅
     # ════════════════════════════════════════════════════
@@ -333,6 +347,10 @@ class MainWindow(QMainWindow):
             self._layout_mgr.add(self._chart_panel, title="차트")
         except ImportError as e:
             log.warning("차트 패널 로드 실패 (pyqtgraph?): %s", e)
+
+        # ── 설정 패널 ─────────────────────────────────────
+        self._settings_panel = SettingsPanel(self._bus)
+        self._layout_mgr.add(self._settings_panel, title="⚙ 설정")
 
         # 관심종목 마지막 선택 종목으로 기본 피드 구독
         _last_sym = self._wl_mgr.last_symbol
@@ -677,6 +695,10 @@ class MainWindow(QMainWindow):
     def _on_broker_connected(self, data) -> None:
         broker = data.get("broker", "") if isinstance(data, dict) else ""
         self._status_bar.showMessage(f"Broker 연결됨: {broker}")
+
+    def _open_settings(self) -> None:
+        """설정 패널을 앞으로 가져오기"""
+        self._layout_mgr.bring_to_front("settings")
 
     def _bridge_to_calc(self, data) -> None:
         self._calc_queue.put(data)
