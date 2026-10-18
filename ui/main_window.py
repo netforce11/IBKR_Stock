@@ -103,6 +103,8 @@ class MainWindow(QMainWindow):
         self._mdi.setBackground(Qt.GlobalColor.lightGray)
         self._mdi.setOption(QMdiArea.AreaOption.DontMaximizeSubWindowOnActivation)
         self.setCentralWidget(self._mdi)
+        # subWindowActivated → ShortcutManager 활성 패널 갱신
+        self._mdi.subWindowActivated.connect(self._on_sub_activated)
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -699,6 +701,15 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         """설정 패널을 앞으로 가져오기"""
         self._layout_mgr.bring_to_front("settings")
+
+    def _on_sub_activated(self, sub) -> None:
+        """MDI 서브윈도우 활성화 → ShortcutManager에 활성 패널 알림"""
+        if not hasattr(self, "_shortcut_mgr") or sub is None:
+            return
+        widget = sub.widget()
+        from shared.ui.panels.base_panel import BasePanel
+        if isinstance(widget, BasePanel):
+            self._shortcut_mgr.set_active(widget)
 
     def _bridge_to_calc(self, data) -> None:
         self._calc_queue.put(data)
