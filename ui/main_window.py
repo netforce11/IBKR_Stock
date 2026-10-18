@@ -300,6 +300,10 @@ class MainWindow(QMainWindow):
         self._shortcut_mgr = ShortcutManager(self)
         self._layout_mgr = PanelLayoutManager(self._mdi, LAYOUT_FILE)
 
+        # QMdiArea 활성 서브윈도우 변경 → 단축키 활성 패널 전환
+        # (focusInEvent 대신 이 시그널을 사용해야 QMdiArea에서 안정적으로 동작)
+        self._mdi.subWindowActivated.connect(self._on_sub_activated)
+
         self._build_panels()
 
         # 저장된 레이아웃 복원 → 없으면 빈 화면 (패널은 숨긴 채 대기)
@@ -355,6 +359,28 @@ class MainWindow(QMainWindow):
         # 관심종목 마지막 선택 종목으로 기본 피드 구독
         _last_sym = self._wl_mgr.last_symbol
         self._feed.subscribe(_last_sym)
+
+    # ════════════════════════════════════════════════════
+    # 활성 패널 → 단축키 전환
+    # ════════════════════════════════════════════════════
+    def _on_sub_activated(self, sub_win) -> None:
+        """
+        QMdiArea.subWindowActivated 시그널 핸들러.
+        서브윈도우가 활성화되면 안에 있는 BasePanel을 찾아
+        ShortcutManager에 알린다.
+        focusInEvent 대신 이 시그널을 사용해야
+        QMdiArea + 자식 위젯 환경에서 안정적으로 동작한다.
+        """
+        if sub_win is None:
+            return
+        widget = sub_win.widget()
+        if widget is None:
+            return
+        # TabGroupSubWindow 안에 탭 위젯이 있는 경우도 처리
+        if hasattr(widget, "currentWidget"):
+            widget = widget.currentWidget() or widget
+        if hasattr(widget, "PANEL_ID"):
+            self._shortcut_mgr.set_active(widget)
 
     # ════════════════════════════════════════════════════
     # 레이아웃 관리
