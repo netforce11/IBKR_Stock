@@ -23,6 +23,10 @@ def _setup_logging() -> None:
             logging.FileHandler(LOG_DIR / "app.log", encoding="utf-8"),
         ],
     )
+    # ibapi 내부 디버그 로그 억제 (tickSize, decoder, client 노이즈)
+    for _noisy in ("ibapi.client", "ibapi.decoder", "ibapi.wrapper",
+                   "ibapi.connection", "ibapi.reader", "ibapi.comm"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 def _install_crash_logger() -> None:
