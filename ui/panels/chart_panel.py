@@ -288,11 +288,15 @@ class StockChartPanel(MinuteChartPanel):
         self._broker = broker
         self._indicators: dict[str, float] = {}
 
-        # 관심종목 패널에 캘린더가 있으므로 차트 사이드바 캘린더 기본 숨김
-        if hasattr(self, "_cal_w"):
-            self._cal_w.setVisible(False)
-        if hasattr(self, "_btn_cal_toggle"):
-            self._btn_cal_toggle.setChecked(False)
+        # 사이드바(심볼 입력·캘린더)는 관심종목 패널이 담당 → 완전 숨김
+        # 차트 영역이 패널 전체를 채우도록 splitter 비율 조정
+        if hasattr(self, "_splitter"):
+            # 사이드바 위젯(index 0) 숨김 + 최소 크기 0
+            sidebar = self._splitter.widget(0)
+            if sidebar:
+                sidebar.setVisible(False)
+                sidebar.setMaximumWidth(0)
+            self._splitter.setSizes([0, 9999])
 
         # 실시간 candle 구독
         bus.subscribe("candle.tick",   self,
