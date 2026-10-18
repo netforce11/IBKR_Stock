@@ -32,6 +32,7 @@ from ui.panels.order_panel import OrderPanel
 from ui.panels.fill_history_panel import FillHistoryPanel
 from ui.panels.watchlist_panel import WatchlistPanel
 from core.watchlist_manager import WatchlistManager
+from ui.status_bar_widget import HtsStatusBar
 
 log = logging.getLogger(__name__)
 
@@ -292,6 +293,9 @@ class MainWindow(QMainWindow):
 
         # 즐겨찾기 복원 (패널 등록 후에 해야 제목 조회 가능)
         self._load_favorites()
+
+        # 우측 상태바 위젯 (연결 상태 / 구독 수 / 레이턴시)
+        self._hts_status = HtsStatusBar(self._status_bar, self._bus, self._feed)
 
         self._status_bar.showMessage("준비")
         log.info("Boot complete")
