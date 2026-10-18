@@ -288,6 +288,12 @@ class StockChartPanel(MinuteChartPanel):
         self._broker = broker
         self._indicators: dict[str, float] = {}
 
+        # 관심종목 패널에 캘린더가 있으므로 차트 사이드바 캘린더 기본 숨김
+        if hasattr(self, "_cal_w"):
+            self._cal_w.setVisible(False)
+        if hasattr(self, "_btn_cal_toggle"):
+            self._btn_cal_toggle.setChecked(False)
+
         # 실시간 candle 구독
         bus.subscribe("candle.tick",   self,
                       lambda d: self._invoke_main("_on_tick_inv", d))

@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QPushButton, QLabel,
     QMenu, QInputDialog, QMessageBox,
-    QAbstractItemView, QSizePolicy,
+    QAbstractItemView, QSizePolicy, QCalendarWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QPoint
+from PyQt6.QtCore import Qt, pyqtSlot, QPoint, QDate
 from PyQt6.QtGui import QFont, QColor, QAction, QPalette
 
 from shared.core.bus import DataBus
@@ -374,6 +374,87 @@ class WatchlistPanel(BasePanel):
         # 기존 그룹 페이지 생성
         for g in self._wl.groups:
             self._add_tab_page(g["name"], g["symbols"])
+
+        # ── 하단 캘린더 (차트 날짜 연동) ─────────────────
+        self._build_calendar()
+
+    def _build_calendar(self) -> None:
+        """관심종목 하단 캘린더 — 날짜 클릭 시 CHART_DATE_SELECT 발행"""
+        # 구분선 레이블
+        sep = QLabel("── 차트 날짜 ──")
+        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sep.setStyleSheet(
+            "font-size:10px; color:#9CA3AF; padding:4px 0 2px 0;")
+        self._layout.addWidget(sep)
+
+        self._wl_calendar = QCalendarWidget()
+        self._wl_calendar.setMaximumDate(QDate.currentDate())
+        self._wl_calendar.setSelectedDate(QDate.currentDate())
+        self._wl_calendar.setGridVisible(False)
+        self._wl_calendar.setNavigationBarVisible(True)
+        self._wl_calendar.setFixedHeight(190)
+        self._wl_calendar.setStyleSheet("""
+            QCalendarWidget QWidget { background:#F5F5F5; color:#111827; }
+            QCalendarWidget QAbstractItemView {
+                background:#fff; color:#111827;
+                selection-background-color:#0969DA;
+                selection-color:#fff;
+            }
+            QCalendarWidget QToolButton {
+                background:#E8ECF0; color:#111827;
+                border:none; border-radius:3px;
+                padding:2px 6px; font-size:11px;
+            }
+            QCalendarWidget QToolButton:hover { background:#D0D8E4; }
+            QCalendarWidget QMenu {
+                background:#fff; color:#111827;
+            }
+            QCalendarWidget #qt_calendar_navigationbar {
+                background:#E8ECF0;
+            }
+        """)
+        self._wl_calendar.selectionChanged.connect(self._on_cal_date_changed)
+        self._layout.addWidget(self._wl_calendar)
+
+        # 이전/다음 버튼
+        nav = QHBoxLayout()
+        nav.setSpacing(4)
+        _nav_qss = (
+            "QPushButton { background:#E8ECF0; color:#111827;"
+            " border:1px solid #D0D7DE; border-radius:3px;"
+            " padding:3px 8px; font-size:11px; }"
+            "QPushButton:hover { background:#D0D8E4; }"
+        )
+        btn_prev = QPushButton("◀ 전날")
+        btn_next = QPushButton("다음 ▶")
+        btn_prev.setStyleSheet(_nav_qss)
+        btn_next.setStyleSheet(_nav_qss)
+        btn_prev.clicked.connect(self._cal_prev_day)
+        btn_next.clicked.connect(self._cal_next_day)
+        nav.addWidget(btn_prev)
+        nav.addWidget(btn_next)
+        self._layout.addLayout(nav)
+
+    def _on_cal_date_changed(self) -> None:
+        """캘린더 날짜 선택 → CHART_DATE_SELECT DataBus 발행"""
+        d = self._wl_calendar.selectedDate().toPyDate()
+        self._bus.publish(Topics.CHART_DATE_SELECT, {"date": d.isoformat()})
+
+    def _cal_prev_day(self) -> None:
+        from datetime import timedelta
+        d = self._wl_calendar.selectedDate().toPyDate() - timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        self._wl_calendar.setSelectedDate(QDate(d.year, d.month, d.day))
+
+    def _cal_next_day(self) -> None:
+        from datetime import timedelta, date
+        d = self._wl_calendar.selectedDate().toPyDate() + timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        if d > date.today():
+            d = date.today()
+        self._wl_calendar.setSelectedDate(QDate(d.year, d.month, d.day))
 
     def _add_tab_page(self, name: str, symbols: list[str]) -> None:
         page = _GroupPage(
