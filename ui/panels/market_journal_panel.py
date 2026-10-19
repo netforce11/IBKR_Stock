@@ -129,19 +129,19 @@ _FIXED_SYMBOLS = ["^NDX", "NVDA"]
 
 # ── 테이블 컬럼 ───────────────────────────────────────────────
 _COLS = [
-    ("날짜",            72),
-    ("요일",            32),
-    ("경제지표",        130),
-    ("주식분기점",      110),
-    ("스파이/스핀\n분기점", 95),   # ← 신규
-    ("옵션분기점",      100),
-    ("선물(MNQ)",       90),
-    ("주식\n기대수익($)",    72),
-    ("옵션\n기대수익($)",    72),
-    ("선물\n기대수익($)",    72),
-    ("분기옵션\n기대수익($)", 75),
-    ("합산손익($)",     80),
-    ("메모",            130),
+    ("날짜",                 72),
+    ("요일",                 32),
+    ("경제지표",             140),
+    ("주식분기점",           120),
+    ("스파이/스핀\n분기점",  110),
+    ("옵션분기점",           110),
+    ("선물(MNQ)",             90),
+    ("주식\n기대수익($)",     78),
+    ("옵션\n기대수익($)",     78),
+    ("선물\n기대수익($)",     78),
+    ("분기옵션\n기대수익($)", 80),
+    ("합산손익($)",           88),
+    ("메모",                 240),  # Stretch 대상 → 최소폭도 넉넉히
 ]
 _COL_SPY   = 4   # 스파이/스핀 분기점
 _COL_OPT   = 5   # 옵션분기점 (+1)
@@ -415,7 +415,7 @@ class MarketJournalPanel(BasePanel):
         for i, (_, w) in enumerate(_COLS):
             self._table.setColumnWidth(i, w)
         self._table.horizontalHeader().setSectionResizeMode(
-            11, QHeaderView.ResizeMode.Stretch)
+            12, QHeaderView.ResizeMode.Stretch)  # 메모 컬럼 (col 12)
         self._table.cellClicked.connect(self._on_row_clicked)
         splitter.addWidget(self._table)
 
