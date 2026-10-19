@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QMessageBox,
 )
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from config.settings import CONFIG, LAYOUT_FILE, DATA_DIR
 from shared.core.bus import get_bus
@@ -79,6 +79,24 @@ def _make_broker(bus):
         return IBKRBroker(bus, CONFIG.ibkr.host, CONFIG.ibkr.port, CONFIG.ibkr.client_id)
     from shared.broker.mock_broker import MockBroker
     return MockBroker(bus)
+
+
+class _BrokerConnectThread(QThread):
+    """브로커 연결을 백그라운드 스레드에서 실행 — UI 블로킹 방지"""
+    succeeded = pyqtSignal(object)   # broker 객체 전달
+    failed    = pyqtSignal(str)      # 에러 메시지 전달
+
+    def __init__(self, bus, parent=None):
+        super().__init__(parent)
+        self._bus = bus
+
+    def run(self):
+        try:
+            broker = _make_broker(self._bus)
+            broker.connect()
+            self.succeeded.emit(broker)
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 class MainWindow(QMainWindow):
@@ -266,15 +284,58 @@ class MainWindow(QMainWindow):
         self._boot_step2()
 
     def _boot_step2(self) -> None:
-        log.info("Boot Step2: Broker connect")
-        self._status_bar.showMessage("Step2: Broker 연결...")
-        self._broker = _make_broker(self._bus)
+        log.info("Boot Step2: Broker connect (async)")
+        self._status_bar.showMessage("Step2: Broker 연결 중... (TWS/Gateway 응답 대기)")
+
+        self._broker_thread = _BrokerConnectThread(self._bus, self)
+        self._broker_thread.succeeded.connect(
+            self._on_broker_connect_ok, Qt.ConnectionType.QueuedConnection)
+        self._broker_thread.failed.connect(
+            self._on_broker_connect_fail, Qt.ConnectionType.QueuedConnection)
+        self._broker_thread.start()
+
+    def _on_broker_connect_ok(self, broker) -> None:
+        log.info("Boot Step2: Broker connect OK")
+        self._broker = broker
+        self._boot_step3()
+
+    def _on_broker_connect_fail(self, err_msg: str) -> None:
+        log.error("Broker connect failed: %s", err_msg)
+
+        # MockBroker로 자동 폴백 — 나머지 부팅 계속 진행
+        from shared.broker.mock_broker import MockBroker
+        self._broker = MockBroker(self._bus)
         try:
             self._broker.connect()
-        except Exception as e:
-            log.exception("Broker connect failed")
-            self._status_bar.showMessage(f"Broker 연결 실패: {e}")
-            return
+        except Exception:
+            pass
+
+        self._status_bar.showMessage("⚠ MockBroker 모드 (IBKR 미연결)")
+
+        # 사용자에게 비차단 방식으로 알림 (QMessageBox는 이벤트 루프 블로킹 → 직접 배너 표시)
+        from PyQt6.QtWidgets import QLabel
+        from PyQt6.QtCore import QTimer
+        banner = QLabel(
+            f"  ⚠  IBKR 연결 실패 — MockBroker 모드로 실행 중\n"
+            f"  원인: {err_msg}\n"
+            f"  (TWS/Gateway를 실행한 뒤 재시작하세요)",
+            self,
+        )
+        banner.setStyleSheet(
+            "QLabel { background:#FEF3C7; color:#92400E; border:1px solid #F59E0B;"
+            " border-radius:4px; padding:8px 12px; font-size:12px; }"
+        )
+        banner.setWordWrap(True)
+        banner.adjustSize()
+        # 메인 윈도우 중앙 상단에 배치
+        bw = min(self.width() - 40, 600)
+        banner.setFixedWidth(bw)
+        banner.move((self.width() - bw) // 2, 60)
+        banner.show()
+        banner.raise_()
+        # 10초 후 자동 제거
+        QTimer.singleShot(10_000, banner.deleteLater)
+
         self._boot_step3()
 
     def _boot_step3(self) -> None:
