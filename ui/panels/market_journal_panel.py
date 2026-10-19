@@ -129,21 +129,23 @@ _FIXED_SYMBOLS = ["^NDX", "NVDA"]
 
 # ── 테이블 컬럼 ───────────────────────────────────────────────
 _COLS = [
-    ("날짜",       72),
-    ("요일",       32),
-    ("경제지표",   130),
-    ("주식분기점", 110),
-    ("옵션분기점", 100),
-    ("선물(MNQ)",  90),
-    ("주식\n기대수익($)", 72),
-    ("옵션\n기대수익($)", 72),
-    ("선물\n기대수익($)", 72),
+    ("날짜",            72),
+    ("요일",            32),
+    ("경제지표",        130),
+    ("주식분기점",      110),
+    ("스파이/스핀\n분기점", 95),   # ← 신규
+    ("옵션분기점",      100),
+    ("선물(MNQ)",       90),
+    ("주식\n기대수익($)",    72),
+    ("옵션\n기대수익($)",    72),
+    ("선물\n기대수익($)",    72),
     ("분기옵션\n기대수익($)", 75),
-    ("합산손익($)", 80),
-    ("메모",       130),
+    ("합산손익($)",     80),
+    ("메모",            130),
 ]
-_COL_OPT   = 4
-_COL_TOTAL = 10
+_COL_SPY   = 4   # 스파이/스핀 분기점
+_COL_OPT   = 5   # 옵션분기점 (+1)
+_COL_TOTAL = 11  # 합산손익 (+1)
 _DOW_KR = ["월", "화", "수", "목", "금", "토", "일"]
 
 
@@ -440,7 +442,7 @@ class MarketJournalPanel(BasePanel):
         root.addWidget(self._form_title)
 
         # ═══════════════════════════════════════════════════════
-        # Row 1: 경제지표 | 주식분기점+📈 | 옵션분기점(D+N) | 선물분기점MNQ
+        # Row 1: 경제지표 | 주식분기점+📈 | 스파이/스핀분기점 | 옵션분기점(D+N) | 선물분기점MNQ
         # ═══════════════════════════════════════════════════════
         row1 = QHBoxLayout(); row1.setSpacing(10)
 
@@ -469,6 +471,16 @@ class MarketJournalPanel(BasePanel):
         stk_inner.addWidget(self._btn_fetch)
         stk_vb.addLayout(stk_inner)
         row1.addLayout(stk_vb)
+
+        # 스파이/스핀 분기점
+        spy_vb = QVBoxLayout(); spy_vb.setSpacing(2)
+        spy_vb.addWidget(self._lbl("스파이 / 스핀 분기점"))
+        self._f_spy_spin = QLineEdit()
+        self._f_spy_spin.setStyleSheet(_INPUT)
+        self._f_spy_spin.setPlaceholderText("SPY/SPIN 분기 날짜 또는 메모")
+        self._f_spy_spin.setFixedWidth(160)
+        spy_vb.addWidget(self._f_spy_spin)
+        row1.addLayout(spy_vb)
 
         # 옵션분기점 (D+N)
         opt_vb = QVBoxLayout(); opt_vb.setSpacing(2)
@@ -872,6 +884,7 @@ class MarketJournalPanel(BasePanel):
                 _DOW_KR[d.weekday()],
                 entry.get("econ",    self._cal_data.get(key, "")),
                 entry.get("stock",   ""),
+                entry.get("spy_spin", ""),   # 스파이/스핀 분기점
                 opt_val,
                 entry.get("futures", ""),
                 _fmt_exp(exps["stk"])   or "",
@@ -893,7 +906,7 @@ class MarketJournalPanel(BasePanel):
                 if c == _COL_OPT and is_opt_chk:
                     item.setForeground(QColor(_OPT_CHECK))
                     f = item.font(); f.setBold(True); item.setFont(f)
-                elif c in (6, 7, 8, 9, _COL_TOTAL):
+                elif c in (7, 8, 9, 10, _COL_TOTAL):
                     txt = str(val)
                     if txt.startswith("+"):
                         item.setForeground(QColor(_UP))
@@ -952,7 +965,8 @@ class MarketJournalPanel(BasePanel):
             self._f_rate_pivot.setStyleSheet(_INPUT_PIVOT)
 
         self._f_econ.setText(entry.get("econ", self._cal_data.get(key, "")))
-        self._f_stock.setText(entry.get("stock",   ""))
+        self._f_stock.setText(entry.get("stock",    ""))
+        self._f_spy_spin.setText(entry.get("spy_spin", ""))
         self._f_option.setText(opt_val)
         self._f_futures.setText(entry.get("futures", ""))
         self._f_amt_stk.setText(entry.get("amt_stk",   ""))
@@ -982,6 +996,7 @@ class MarketJournalPanel(BasePanel):
         entry = {
             "econ":       self._f_econ.text().strip(),
             "stock":      self._f_stock.text().strip(),
+            "spy_spin":   self._f_spy_spin.text().strip(),
             "option":     self._f_option.text().strip(),
             "futures":    self._f_futures.text().strip(),
             "amt_stk":    self._f_amt_stk.text().strip(),

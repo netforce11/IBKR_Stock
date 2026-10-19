@@ -328,11 +328,16 @@ class WatchlistPanel(BasePanel):
         self.setStyleSheet(f"WatchlistPanel {{ background:{_BG}; }}")
         self._build_ui()
 
-        # 모든 그룹의 모든 종목 가격 구독
+        # 모든 그룹의 모든 종목 가격 구독 (DataBus + 브로커 피드)
         for g in self._wl.groups:
             for sym in g["symbols"]:
                 bus.subscribe(Topics.stock_price(sym), self,
                               lambda d, s=sym: self._invoke_main("_on_price", (s, d)))
+                if feed:
+                    try:
+                        feed.subscribe(sym)
+                    except Exception:
+                        pass
 
     # ── UI 구성 ─────────────────────────────────────────
     def _build_ui(self) -> None:

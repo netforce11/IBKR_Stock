@@ -50,8 +50,12 @@ class IBKRFeed:
             self._broker.subscribe_quote(sym)
             log.info("Feed 구독: %s", sym)
         except AttributeError:
-            # MockBroker는 subscribe_quote 없음 — 자체 피드로 동작
-            log.debug("MockBroker — subscribe_quote 스킵: %s", sym)
+            # MockBroker는 subscribe_quote 없음 → MockBroker.subscribe() 직접 호출
+            try:
+                self._broker.subscribe(sym)
+                log.debug("MockBroker.subscribe() 호출: %s", sym)
+            except Exception as e:
+                log.debug("MockBroker fallback 실패 (%s): %s", sym, e)
 
     def unsubscribe(self, symbol: str) -> None:
         """실시간 시세 구독 해제"""
