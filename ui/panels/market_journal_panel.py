@@ -217,21 +217,36 @@ class _PriceFetchThread(QThread):
         parts_fixed: list[str] = []
         tqqq_close = qqq_close = ndx_close = 0.0
 
+        def _get_close(sym: str) -> tuple[float, str]:
+            """종가 + 실제 날짜 문자열 반환. 당일 없으면 최근 5일치 사용."""
+            # 1차: 지정 날짜 범위
+            h = yf.Ticker(sym).history(
+                start=start.isoformat(), end=end.isoformat(),
+                auto_adjust=True)
+            if not h.empty:
+                return float(h.iloc[0]["Close"]), h.index[0].strftime("%m/%d")
+            # 2차: 최근 5거래일 (오늘 장중/데이터 미반영 대비)
+            h2 = yf.Ticker(sym).history(period="5d", auto_adjust=True)
+            if not h2.empty:
+                return float(h2.iloc[-1]["Close"]), h2.index[-1].strftime("%m/%d")+"*"
+            return 0.0, ""
+
         try:
             for sym in (self._symbols + _FIXED_SYMBOLS):
                 is_fixed = sym in _FIXED_SYMBOLS
-                hist = yf.Ticker(sym).history(
-                    start=start.isoformat(), end=end.isoformat(),
-                    auto_adjust=True)
-                if hist.empty:
+                close, dt_tag = _get_close(sym)
+                if close == 0.0:
                     entry = f"{sym} N/A"
                 else:
-                    close = float(hist.iloc[0]["Close"])
                     if sym == "^NDX":
                         entry = f"NDX {close:,.0f}"
+                        if dt_tag.endswith("*"):
+                            entry += f"({dt_tag})"
                         ndx_close = close
                     else:
                         entry = f"{sym} {close:.2f}"
+                        if dt_tag.endswith("*"):
+                            entry += f"({dt_tag})"
                     if sym == "TQQQ": tqqq_close = close
                     elif sym == "QQQ": qqq_close = close
                 (parts_fixed if is_fixed else parts_user).append(entry)
@@ -250,6 +265,10 @@ class _PriceFetchThread(QThread):
                 start=start.isoformat(), end=end.isoformat(), auto_adjust=True)
             if not h.empty:
                 mnq_val, mnq_src = float(h.iloc[0]["Close"]), "직접"
+            else:
+                h2 = yf.Ticker("MNQ=F").history(period="5d", auto_adjust=True)
+                if not h2.empty:
+                    mnq_val, mnq_src = float(h2.iloc[-1]["Close"]), "직접(전일)"
         except Exception:
             pass
 
