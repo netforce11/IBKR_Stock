@@ -455,12 +455,16 @@ class MainWindow(QMainWindow):
     # ════════════════════════════════════════════════════
     def _save_layout(self) -> None:
         """현재 슬롯 파일 + 기본 파일 동시 저장."""
+        if not hasattr(self, "_layout_mgr"):
+            return
         if self._cur_slot > 0:
             self._layout_mgr.save(_slot_file(self._cur_slot))
         self._layout_mgr.save()
         self._status_bar.showMessage("레이아웃 저장 완료", 2000)
 
     def _restore_layout(self) -> None:
+        if not hasattr(self, "_layout_mgr"):
+            return
         target = _slot_file(self._cur_slot) if self._cur_slot > 0 else None
         if not self._layout_mgr.restore(target):
             self._reset_layout()
@@ -503,6 +507,9 @@ class MainWindow(QMainWindow):
     # ════════════════════════════════════════════════════
     def _switch_slot(self, slot: int) -> None:
         """현재 상태 저장 → 슬롯 파일 복원 (없으면 기본 배치)."""
+        # 부팅 미완료 시 무시 (Step4 이전에 버튼 클릭 방어)
+        if not hasattr(self, "_layout_mgr"):
+            return
         # 현재 슬롯 저장
         if self._cur_slot > 0:
             self._layout_mgr.save(_slot_file(self._cur_slot))
