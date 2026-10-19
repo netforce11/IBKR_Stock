@@ -345,21 +345,29 @@ class OrderbookPanel(BasePanel):
             f"color: {PRICE_HL}; font-size: 22px; font-weight: bold;")
         g.addWidget(self._lbl_price, 2, 1)
 
-        g.addWidget(self._hline("#CED4DA"), 3, 0, 1, 2)
+        # 등락률
+        g.addWidget(_label("등락률"), 3, 0)
+        self._lbl_chg = _value(color=LABEL_DIM)
+        g.addWidget(self._lbl_chg, 3, 1)
 
-        g.addWidget(_label("매수1호가"), 4, 0)
+        g.addWidget(self._hline("#CED4DA"), 4, 0, 1, 2)
+
+        # 매수1호가
+        g.addWidget(_label("매수1호가"), 5, 0)
         self._lbl_bid = _value(color=BID_TEXT)
-        g.addWidget(self._lbl_bid, 4, 1)
+        g.addWidget(self._lbl_bid, 5, 1)
 
-        g.addWidget(_label("매도1호가"), 5, 0)
+        # 매도1호가
+        g.addWidget(_label("매도1호가"), 6, 0)
         self._lbl_ask = _value(color=ASK_TEXT)
-        g.addWidget(self._lbl_ask, 5, 1)
+        g.addWidget(self._lbl_ask, 6, 1)
 
-        g.addWidget(_label("스프레드"), 6, 0)
+        # 스프레드
+        g.addWidget(_label("스프레드"), 7, 0)
         self._lbl_spread = _value(color=LABEL_DIM)
-        g.addWidget(self._lbl_spread, 6, 1)
+        g.addWidget(self._lbl_spread, 7, 1)
 
-        g.setRowStretch(7, 1)
+        g.setRowStretch(8, 1)  # 하단 여백
         return w
 
     @staticmethod
@@ -394,9 +402,10 @@ class OrderbookPanel(BasePanel):
     # ── DataBus 슬롯 ─────────────────────────────────────
     @pyqtSlot(object)
     def _on_price(self, data: dict) -> None:
-        price = data.get("price", 0.0)
-        bid   = data.get("bid",   0.0)
-        ask   = data.get("ask",   0.0)
+        price      = data.get("price",      0.0)
+        bid        = data.get("bid",        0.0)
+        ask        = data.get("ask",        0.0)
+        prev_close = data.get("prev_close", 0.0)
         # 정보창
         self._lbl_price.setText(f"${price:,.2f}")
         self._lbl_bid.setText(f"${bid:,.2f}")
@@ -406,6 +415,17 @@ class OrderbookPanel(BasePanel):
         # 현재가 바
         self._bar_price.setText(f"${price:,.2f}")
         self._bar_spread.setText(f"스프레드 ${spread:.4f}")
+
+        # 등락률
+        if prev_close > 0 and price > 0:
+            chg_pct = (price - prev_close) / prev_close * 100
+            sign    = "+" if chg_pct >= 0 else ""
+            color   = "#26A69A" if chg_pct > 0 else ("#EF5350" if chg_pct < 0 else "#888")
+            self._lbl_chg.setText(f"{sign}{chg_pct:.2f}%")
+            self._lbl_chg.setStyleSheet(
+                f"color: {color}; font-size: 12px; font-weight: bold;")
+        else:
+            self._lbl_chg.setText("—")
 
     @pyqtSlot(object)
     def _on_book(self, data: dict) -> None:

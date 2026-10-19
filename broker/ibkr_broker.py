@@ -424,18 +424,23 @@ class IBKRBroker(BaseBroker):
             cache["ask"] = price
         elif tick_type == 4:
             cache["last"] = price
+        elif tick_type == 9:
+            # Close = 전일 종가 (장 중/장 후 모두 수신됨)
+            cache["prev_close"] = price
 
         # last/bid/ask 중 하나라도 갱신되면 publish
-        last = cache.get("last") or cache.get("bid", 0)
-        bid  = cache.get("bid", 0)
-        ask  = cache.get("ask", 0)
+        last       = cache.get("last") or cache.get("bid", 0)
+        bid        = cache.get("bid", 0)
+        ask        = cache.get("ask", 0)
+        prev_close = cache.get("prev_close", 0.0)
         if last > 0:
             self._bus.publish(Topics.stock_price(sym), {
-                "symbol": sym,
-                "price":  last,
-                "bid":    bid,
-                "ask":    ask,
-                "ts":     time.time(),
+                "symbol":     sym,
+                "price":      last,
+                "bid":        bid,
+                "ask":        ask,
+                "prev_close": prev_close,
+                "ts":         time.time(),
             })
 
     def _on_tick_size(self, req_id: int,
