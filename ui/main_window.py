@@ -32,6 +32,7 @@ from ui.panels.order_panel import OrderPanel
 from ui.panels.fill_history_panel import FillHistoryPanel
 from ui.panels.watchlist_panel import WatchlistPanel
 from ui.panels.settings_panel import SettingsPanel
+from ui.panels.market_journal_panel import MarketJournalPanel
 from core.watchlist_manager import WatchlistManager
 from ui.status_bar_widget import HtsStatusBar
 
@@ -131,7 +132,8 @@ class MainWindow(QMainWindow):
             ("stock_chart",  "차트"),
             ("order",        "주문"),
             ("fill_history", "체결내역"),
-            ("settings",     "⚙ 설정"),
+            ("settings",        "⚙ 설정"),
+            ("market_journal",  "📋 시장일지"),
         ]
         self._view_actions: dict[str, QAction] = {}
         for pid, label in _panel_meta:
@@ -355,6 +357,11 @@ class MainWindow(QMainWindow):
         # ── 설정 패널 ─────────────────────────────────────
         self._settings_panel = SettingsPanel(self._bus)
         self._layout_mgr.add(self._settings_panel, title="⚙ 설정")
+
+        # ── 시장 일지 패널 ────────────────────────────────
+        self._journal_panel = MarketJournalPanel(self._bus)
+        self._journal_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._journal_panel, title="📋 시장일지")
 
         # 관심종목 마지막 선택 종목으로 기본 피드 구독
         _last_sym = self._wl_mgr.last_symbol
