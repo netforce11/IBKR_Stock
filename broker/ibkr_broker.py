@@ -117,6 +117,10 @@ if IBAPI_OK:
             if error_code in _INFO:
                 return
             log.error("[IBKR] [%d] req=%d: %s", error_code, req_id, error_string)
+            # 326: client ID 중복 → connect() 재시도 신호
+            if error_code == 326:
+                self._b._connect_error_code = 326
+                self._b._connect_event.set()
 
         # ── 시세 콜백 ─────────────────────────────────────────
         def tickPrice(self, req_id: int, tick_type: int,
@@ -183,8 +187,9 @@ class IBKRBroker(BaseBroker):
         self._port      = port
         self._client_id = client_id
 
-        self._connected     = False
-        self._connect_event = threading.Event()
+        self._connected          = False
+        self._connect_event      = threading.Event()
+        self._connect_error_code = 0   # Error 326 등 연결 실패 코드 저장
         self._next_order_id = 1
         self._ib: Optional[_IBWrapper] = None
         self._ib_thread: Optional[threading.Thread] = None
@@ -210,17 +215,44 @@ class IBKRBroker(BaseBroker):
             raise RuntimeError(
                 "ibapi 미설치 — 'pip install ibapi' 후 TWS를 실행하세요.")
 
-        self._ib = _IBWrapper(self)
-        self._ib.connect(self._host, self._port, self._client_id)
+        _MAX_RETRY = 5
+        for attempt in range(_MAX_RETRY):
+            # 매 시도마다 이벤트/오류 코드 초기화
+            self._connect_event.clear()
+            self._connect_error_code = 0
 
-        self._ib_thread = threading.Thread(
-            target=self._ib.run, daemon=True, name="IBKR-Socket")
-        self._ib_thread.start()
+            self._ib = _IBWrapper(self)
+            self._ib.connect(self._host, self._port, self._client_id)
 
-        # nextValidId 수신 대기 (최대 10초)
-        if not self._connect_event.wait(timeout=10):
+            self._ib_thread = threading.Thread(
+                target=self._ib.run, daemon=True,
+                name=f"IBKR-Socket-{self._client_id}")
+            self._ib_thread.start()
+
+            # nextValidId 수신 대기 (최대 10초)
+            if not self._connect_event.wait(timeout=10):
+                raise RuntimeError(
+                    f"IBKR 연결 실패 — TWS/Gateway가 {self._host}:{self._port}에서 실행 중인지 확인")
+
+            # Error 326: client ID 중복 → client_id 증가 후 재시도
+            if self._connect_error_code == 326:
+                log.warning(
+                    "[IBKRBroker] client_id=%d 중복 (Error 326) — "
+                    "client_id=%d 로 재시도 (%d/%d)",
+                    self._client_id, self._client_id + 1, attempt + 1, _MAX_RETRY)
+                try:
+                    self._ib.disconnect()
+                except Exception:
+                    pass
+                self._client_id += 1
+                continue
+
+            # 정상 연결
+            break
+        else:
             raise RuntimeError(
-                f"IBKR 연결 실패 — TWS/Gateway가 {self._host}:{self._port}에서 실행 중인지 확인")
+                f"IBKR client ID 중복으로 {_MAX_RETRY}회 재시도 실패 "
+                f"(마지막 client_id={self._client_id})")
 
         self._bus.publish(Topics.BROKER_CONNECTED,
                           {"broker": "ibkr",
