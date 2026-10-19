@@ -91,13 +91,28 @@ class TradingEngine:
 
         try:
             order_id = self._broker.place_order(req)
+            # ── DB 저장 + UI 갱신용 토픽 발행 ─────────────
+            self._bus.publish(Topics.ORDER_PLACED, {
+                "order_id":   order_id,
+                "symbol":     req.symbol,
+                "side":       req.side,
+                "qty":        req.quantity,
+                "price":      req.price,
+                "order_type": req.order_type,
+            })
             self._bus.publish(Topics.order_status(order_id), {"status": "submitted"})
         except Exception as e:
             log.exception("Broker place_order error")
             self._bus.publish(Topics.SYSTEM_ERROR, {"msg": str(e)})
 
     def _cancel_order(self, cmd: dict) -> None:
+        order_id = cmd.get("order_id", "")
         try:
-            self._broker.cancel_order(cmd["order_id"])
+            self._broker.cancel_order(order_id)
+            # ── DB 저장 + UI 갱신용 토픽 발행 ─────────────
+            self._bus.publish(Topics.ORDER_CANCELLED, {
+                "order_id": order_id,
+                "symbol":   cmd.get("symbol", ""),
+            })
         except Exception as e:
             self._bus.publish(Topics.SYSTEM_ERROR, {"msg": str(e)})
