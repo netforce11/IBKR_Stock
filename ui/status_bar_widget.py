@@ -1,20 +1,27 @@
 """
 ui/status_bar_widget.py
 ───────────────────────
-우측 하단 상태바 위젯 — IBKR 연결/구독/레이턴시 표시
+우측 하단 상태바 위젯 — IBKR 연결/구독/레이턴시/장구분 표시
 
 레이아웃 (우→좌 순, addPermanentWidget):
-  [ ⬤ Mock / IBKR ]  [ 📡 구독 0개 ]  [ ⚡ 0ms ]  [ 메시지 ···초 ]
+  [ 🕐 장구분 ]  [ ⬤ Mock / IBKR ]  [ 📡 구독 0개 ]  [ ⚡ 0ms ]
 
 토픽 구독:
   BROKER_CONNECTED    → 연결 표시등 녹색
   BROKER_DISCONNECTED → 연결 표시등 빨강
   stock.price.*       → 구독 카운터 + 레이턴시 갱신 (서버 ts 이용)
   RISK_KILL_SWITCH    → 킬스위치 경고 표시
+
+장 구분 (ET 기준):
+  프리마켓  04:00 – 09:30
+  정규장    09:30 – 16:00
+  애프터    16:00 – 20:00
+  장마감    그 외
 """
 from __future__ import annotations
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 
 from PyQt6.QtWidgets import QStatusBar, QLabel, QWidget, QHBoxLayout, QFrame
 from PyQt6.QtCore    import Qt, QTimer, pyqtSlot
@@ -134,6 +141,62 @@ class LatencyWidget(QWidget):
         self._val.setStyleSheet(_LBL_QSS.format(color=color))
 
 
+def _get_market_session() -> tuple[str, str, str]:
+    """
+    현재 ET 시간 기준 장 구분 반환.
+    반환: (세션명, 이모지, 색상 hex)
+    """
+    ET = timezone(timedelta(hours=-5))   # EST (DST 미적용 — 근사치)
+    now_et = datetime.now(ET)
+    # 주말 체크
+    if now_et.weekday() >= 5:
+        return ("주말 휴장", "🔴", "#EF4444")
+    h, m = now_et.hour, now_et.minute
+    mins = h * 60 + m
+    if mins < 4 * 60:           # 00:00 ~ 04:00
+        return ("장 마감", "🔴", "#EF4444")
+    elif mins < 9 * 60 + 30:    # 04:00 ~ 09:30
+        return ("프리마켓", "🟡", "#F59E0B")
+    elif mins < 16 * 60:        # 09:30 ~ 16:00
+        return ("정규장", "🟢", "#22C55E")
+    elif mins < 20 * 60:        # 16:00 ~ 20:00
+        return ("애프터마켓", "🟠", "#F97316")
+    else:                        # 20:00 ~
+        return ("장 마감", "🔴", "#EF4444")
+
+
+class MarketSessionWidget(QWidget):
+    """장 구분 표시 위젯 (1분마다 자동 갱신)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 0, 8, 0)
+        lay.setSpacing(4)
+
+        self._icon_lbl = QLabel()
+        self._text_lbl = QLabel()
+        self._text_lbl.setStyleSheet(_LBL_QSS.format(color=_C_TEXT))
+        lay.addWidget(self._icon_lbl)
+        lay.addWidget(self._text_lbl)
+
+        self._refresh()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(30_000)   # 30초마다 갱신
+
+    def _refresh(self) -> None:
+        session, emoji, color = _get_market_session()
+        ET = timezone(timedelta(hours=-5))
+        now_et = datetime.now(ET)
+        time_str = now_et.strftime("%H:%M")
+        self._icon_lbl.setText(emoji)
+        self._icon_lbl.setStyleSheet(f"font-size:11px;")
+        self._text_lbl.setText(f"{session}  ET {time_str}")
+        self._text_lbl.setStyleSheet(_LBL_QSS.format(color=color))
+
+
 class SubscriptionWidget(QWidget):
     """📡 구독 N개"""
 
@@ -169,15 +232,18 @@ class HtsStatusBar:
         self._feed = feed   # IBKRFeed — 구독 수 조회용
 
         # ── 위젯 생성 ─────────────────────────────────
-        self._conn   = ConnectionWidget()
-        self._subs   = SubscriptionWidget()
-        self._lat    = LatencyWidget()
+        self._market  = MarketSessionWidget()
+        self._conn    = ConnectionWidget()
+        self._subs    = SubscriptionWidget()
+        self._lat     = LatencyWidget()
 
         # 상태바 배경 (다크)
-        for w in (self._conn, self._subs, self._lat):
+        for w in (self._market, self._conn, self._subs, self._lat):
             w.setStyleSheet(f"background:{_C_BG}; border-left:1px solid #334155;")
 
         # 우측에서부터 영구 위젯 등록 (addPermanentWidget은 우측 정렬)
+        self._bar.addPermanentWidget(self._market)
+        self._bar.addPermanentWidget(_sep_widget())
         self._bar.addPermanentWidget(self._conn)
         self._bar.addPermanentWidget(_sep_widget())
         self._bar.addPermanentWidget(self._subs)
