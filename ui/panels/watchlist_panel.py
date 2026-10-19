@@ -63,22 +63,17 @@ _TABLE_QSS = f"""
 QTableWidget {{
     background-color:{_BG_ROW};
     alternate-background-color:{_BG_ALT};
-    color:{_TEXT};
     gridline-color:{_BORDER};
     border:none;
     font-size:12px;
-    selection-background-color:{_SEL_BG};
-    selection-color:{_SEL_FG};
 }}
 QTableWidget::item {{
     background-color:{_BG_ROW};
-    color:{_TEXT};
     padding:3px 6px;
     border:none;
 }}
 QTableWidget::item:alternate {{
     background-color:{_BG_ALT};
-    color:{_TEXT};
 }}
 QTableWidget::item:selected {{
     background-color:{_SEL_BG};
@@ -219,8 +214,26 @@ class _GroupPage(QWidget):
             fg = QColor(_ACT_FG) if is_active else QColor(_TEXT)
             for c in range(3):
                 item = self._tbl.item(r, c)
-                if item:
-                    item.setBackground(bg)
+                if not item:
+                    continue
+                item.setBackground(bg)
+                if is_active:
+                    # 선택 행은 흰색으로 통일
+                    item.setForeground(fg)
+                elif c == self.COL_CHG:
+                    # 등락률 열은 캐시에서 색상 복원
+                    sym_item = self._tbl.item(r, self.COL_SYM)
+                    sym = sym_item.text() if sym_item else ""
+                    cached = self._cache.get(sym, {})
+                    price = cached.get("price", 0.0)
+                    prev  = cached.get("prev_close", 0.0)
+                    if prev and prev > 0:
+                        chg = (price - prev) / prev * 100
+                        item.setForeground(QColor(
+                            _UP if chg > 0 else _DOWN if chg < 0 else _FLAT))
+                    else:
+                        item.setForeground(QColor(_TEXT))
+                else:
                     item.setForeground(fg)
 
     def highlight_symbol(self, symbol: str) -> None:
