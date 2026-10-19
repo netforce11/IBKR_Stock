@@ -317,6 +317,8 @@ class MarketJournalPanel(BasePanel):
         super().__init__(bus, parent)
         self._load_journal()
         self._load_tradier_cal()
+        # 초기 뷰: 1주 기준 (이번 주)
+        self._view_start = self._view_start_for(self._view_weeks)
         self._refresh_table()
         self._select_date(date.today())
 
@@ -420,7 +422,7 @@ class MarketJournalPanel(BasePanel):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         self._layout.addWidget(splitter, 1)
-        self._view_start = _week_start(date.today())
+        self._view_start = _week_start(date.today())   # _set_weeks 초기화 전 임시; 이후 _view_start_for()로 덮어씀
 
     # ──────────────────────────────────────────────────────────
     def _build_edit_form(self) -> QWidget:
@@ -925,12 +927,33 @@ class MarketJournalPanel(BasePanel):
         has_data = bool(entry)
         self._btn_delete.setEnabled(has_data)
 
-        self._form_title.setText(
-            f"✏️  {d.strftime('%Y-%m-%d')} ({_DOW_KR[d.weekday()]}) 편집")
+        # 분기옵션 타진일 여부 확인
+        opt_val   = entry.get("option", "")
+        is_pivot  = "옵션 분기 타진" in opt_val
+
+        if is_pivot:
+            self._form_title.setText(
+                f"🎯  {d.strftime('%Y-%m-%d')} ({_DOW_KR[d.weekday()]}) — "
+                f"옵션 분기 타진일  ▼ 아래 분기옵션 투자금/수익률 입력 후 저장")
+            self._form_title.setStyleSheet(
+                "QLabel { color:#6D28D9; font-size:12px; font-weight:bold; }")
+            # 분기옵션 섹션 배경 강조
+            self._f_amt_pivot.setStyleSheet(
+                _INPUT_PIVOT.replace("border:1px solid #C4B5FD",
+                                     "border:2px solid #7C3AED"))
+            self._f_rate_pivot.setStyleSheet(
+                _INPUT_PIVOT.replace("border:1px solid #C4B5FD",
+                                     "border:2px solid #7C3AED"))
+        else:
+            self._form_title.setText(
+                f"✏️  {d.strftime('%Y-%m-%d')} ({_DOW_KR[d.weekday()]}) 편집")
+            self._form_title.setStyleSheet(_LBL_BOLD)
+            self._f_amt_pivot.setStyleSheet(_INPUT_PIVOT)
+            self._f_rate_pivot.setStyleSheet(_INPUT_PIVOT)
 
         self._f_econ.setText(entry.get("econ", self._cal_data.get(key, "")))
         self._f_stock.setText(entry.get("stock",   ""))
-        self._f_option.setText(entry.get("option",  ""))
+        self._f_option.setText(opt_val)
         self._f_futures.setText(entry.get("futures", ""))
         self._f_amt_stk.setText(entry.get("amt_stk",   ""))
         self._f_rate_stk.setText(entry.get("rate_stk",  ""))
@@ -942,6 +965,10 @@ class MarketJournalPanel(BasePanel):
         self._f_rate_pivot.setText(entry.get("rate_pivot",""))
         self._f_memo.setText(entry.get("memo",    ""))
         # 기대수익/합산은 textChanged 시그널로 자동 갱신됨
+
+        # 분기옵션 타진일이면 해당 입력 필드로 스크롤/포커스
+        if is_pivot:
+            self._f_amt_pivot.setFocus()
 
         if hasattr(self, "_row_dates"):
             for r, rd in enumerate(self._row_dates):
@@ -1021,12 +1048,26 @@ class MarketJournalPanel(BasePanel):
     # ══════════════════════════════════════════════════════════
     # 뷰 이동
     # ══════════════════════════════════════════════════════════
+    # ── 뷰 기준점: 오늘 기준 과거 weeks_back 주 전부터 시작 ──────
+    #   1주 → 과거 0주 (이번 주)
+    #   2주 → 과거 0주 (이번 주 + 다음 1주)
+    #   3주 → 과거 0주 (이번 주 + 다음 2주)
+    #   4주 → 과거 1주 (지난주 + 이번 주 + 다음 2주)
+    _PAST_WEEKS = {1: 0, 2: 0, 3: 0, 4: 1}
+
+    def _view_start_for(self, n: int) -> date:
+        """n주 뷰의 시작 월요일 = 오늘 기준 과거 _PAST_WEEKS[n] 주 전"""
+        past = self._PAST_WEEKS.get(n, 0)
+        return _week_start(date.today()) - timedelta(weeks=past)
+
     def _set_weeks(self, n: int) -> None:
         self._view_weeks = n
         self._btn_1w.setChecked(n == 1)
         self._btn_2w.setChecked(n == 2)
         self._btn_3w.setChecked(n == 3)
         self._btn_4w.setChecked(n == 4)
+        # 주 수 바꿀 때 오늘 기준으로 뷰 재정렬
+        self._view_start = self._view_start_for(n)
         self._refresh_table()
 
     def _go_prev(self) -> None:
@@ -1038,7 +1079,8 @@ class MarketJournalPanel(BasePanel):
         self._refresh_table()
 
     def _goto_today(self) -> None:
-        self._view_start = _week_start(date.today())
+        """오늘 버튼: 현재 뷰 주 수 기준으로 오늘이 보이는 위치로 재정렬"""
+        self._view_start = self._view_start_for(self._view_weeks)
         self._refresh_table()
         self._select_date(date.today())
 
