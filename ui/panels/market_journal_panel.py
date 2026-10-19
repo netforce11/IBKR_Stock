@@ -177,11 +177,16 @@ def _parse_float(text: str) -> float:
         return 0.0
 
 
-def _calc_exp(amt_text: str, rate_text: str) -> float:
-    """투자금 × 수익률% → 기대수익 달러"""
+def _calc_exp(amt_text: str, rate_text: str,
+              direct_text: str = "") -> float:
+    """투자금 × 수익률% → 기대수익 달러.
+    amt/rate 가 모두 비어 있으면 direct_text(구버전 직접입력 값)를 사용."""
     amt  = _parse_float(amt_text)
     rate = _parse_float(rate_text)
-    return amt * rate / 100.0
+    if amt and rate:
+        return amt * rate / 100.0
+    # 하위호환: 구버전 직접 저장값 사용
+    return _parse_float(direct_text)
 
 
 def _fmt_exp(val: float) -> str:
@@ -358,6 +363,27 @@ class MarketJournalPanel(BasePanel):
                   self._btn_1w, self._btn_2w, self._btn_3w, self._btn_4w,
                   btn_today):
             tb_lay.addWidget(w)
+
+        tb_lay.addSpacing(12)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet(f"QFrame {{ color:{_BORDER}; }}")
+        tb_lay.addWidget(sep)
+        tb_lay.addSpacing(6)
+
+        self._btn_delete = QPushButton("🗑 행 삭제")
+        self._btn_delete.setStyleSheet(
+            "QPushButton { background:#FEF2F2; color:#C62828;"
+            " border:1px solid #FCA5A5; border-radius:3px;"
+            " padding:3px 10px; font-size:11px; }"
+            "QPushButton:hover { background:#FEE2E2; }"
+            "QPushButton:disabled { background:#E8ECF0; color:#9CA3AF;"
+            " border-color:#D0D7DE; }")
+        self._btn_delete.setFixedWidth(80)
+        self._btn_delete.setEnabled(False)
+        self._btn_delete.setToolTip("선택된 날짜의 모든 입력 데이터를 삭제합니다")
+        self._btn_delete.clicked.connect(self._on_delete_row)
+        tb_lay.addWidget(self._btn_delete)
         self._layout.addWidget(tb)
 
         # 스플리터
@@ -796,15 +822,20 @@ class MarketJournalPanel(BasePanel):
             log.warning("[Journal] Tradier 캘린더 로드 실패: %s", e)
 
     def _entry_exp(self, entry: dict) -> dict[str, float]:
-        """엔트리에서 기대수익 4개 + 합산 계산 (표시용)"""
+        """엔트리에서 기대수익 4개 + 합산 계산 (표시용).
+        구버전 직접 입력 키(exp_stk/exp_opt/exp_fut)도 하위호환으로 사용."""
         exp_stk   = _calc_exp(entry.get("amt_stk",   ""),
-                               entry.get("rate_stk",  ""))
+                               entry.get("rate_stk",  ""),
+                               entry.get("exp_stk",   ""))
         exp_opt   = _calc_exp(entry.get("amt_opt",   ""),
-                               entry.get("rate_opt",  ""))
+                               entry.get("rate_opt",  ""),
+                               entry.get("exp_opt",   ""))
         exp_fut   = _calc_exp(entry.get("amt_fut",   ""),
-                               entry.get("rate_fut",  ""))
+                               entry.get("rate_fut",  ""),
+                               entry.get("exp_fut",   ""))
         exp_pivot = _calc_exp(entry.get("amt_pivot", ""),
-                               entry.get("rate_pivot",""))
+                               entry.get("rate_pivot",""),
+                               entry.get("exp_pivot", ""))
         return {
             "stk":   exp_stk,
             "opt":   exp_opt,
@@ -890,6 +921,9 @@ class MarketJournalPanel(BasePanel):
         self._sel_date = d
         key   = d.isoformat()
         entry = self._journal.get(key, {})
+        # 삭제 버튼: 해당 날짜 데이터가 있을 때만 활성화
+        has_data = bool(entry)
+        self._btn_delete.setEnabled(has_data)
 
         self._form_title.setText(
             f"✏️  {d.strftime('%Y-%m-%d')} ({_DOW_KR[d.weekday()]}) 편집")
@@ -953,7 +987,31 @@ class MarketJournalPanel(BasePanel):
 
         self._save_journal()
         self._refresh_table()
-        self._select_date(self._sel_date)
+        self._select_date(self._sel_date)   # 삭제 버튼 활성화도 여기서 처리
+
+    @pyqtSlot()
+    def _on_delete_row(self) -> None:
+        if self._sel_date is None:
+            return
+        key = self._sel_date.isoformat()
+        if key not in self._journal:
+            return
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "데이터 삭제 확인",
+            f"{self._sel_date.strftime('%Y-%m-%d')} ({_DOW_KR[self._sel_date.weekday()]}) "
+            f"의 모든 입력 데이터를 삭제하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        del self._journal[key]
+        self._save_journal()
+        log.info("[Journal] %s 데이터 삭제", key)
+        self._refresh_table()
+        self._select_date(self._sel_date)   # 폼 초기화 + 삭제버튼 비활성
 
     @pyqtSlot()
     def _on_cancel(self) -> None:
