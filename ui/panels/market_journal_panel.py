@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLineEdit,
-    QFrame, QSplitter,
+    QFrame, QSplitter, QCheckBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui  import QColor
@@ -420,7 +420,7 @@ class MarketJournalPanel(BasePanel):
         splitter.addWidget(self._table)
 
         splitter.addWidget(self._build_edit_form())
-        splitter.setSizes([360, 320])
+        splitter.setSizes([340, 360])
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         self._layout.addWidget(splitter, 1)
@@ -482,14 +482,33 @@ class MarketJournalPanel(BasePanel):
         spy_vb.addWidget(self._f_spy_spin)
         row1.addLayout(spy_vb)
 
-        # 옵션분기점 (D+N)
+        # 옵션분기점 — D+N 입력 + 3가지 유형 체크박스
         opt_vb = QVBoxLayout(); opt_vb.setSpacing(2)
         opt_vb.addWidget(self._lbl("옵션분기점 (D+1~D+5 → 해당일 자동 기록)"))
+
+        # D+N 입력
+        opt_top = QHBoxLayout(); opt_top.setSpacing(4)
         self._f_option = QLineEdit()
         self._f_option.setStyleSheet(_INPUT)
         self._f_option.setPlaceholderText("예: D+3  또는 직접 입력")
-        self._f_option.setFixedWidth(160)
-        opt_vb.addWidget(self._f_option)
+        self._f_option.setFixedWidth(130)
+        opt_top.addWidget(self._f_option)
+        opt_vb.addLayout(opt_top)
+
+        # 체크박스 3종
+        _CHK_QSS = ("QCheckBox { font-size:11px; color:#374151; spacing:3px; }"
+                    "QCheckBox::indicator { width:13px; height:13px; }"
+                    "QCheckBox::indicator:checked { background:#6D28D9; border:1px solid #6D28D9; border-radius:2px; }"
+                    "QCheckBox::indicator:unchecked { background:#fff; border:1px solid #9CA3AF; border-radius:2px; }")
+        chk_row = QHBoxLayout(); chk_row.setSpacing(6); chk_row.setContentsMargins(0,0,0,0)
+        self._chk_opt_est    = QCheckBox("분기 추정")
+        self._chk_opt_gamma  = QCheckBox("감마 폭발")
+        self._chk_opt_trend  = QCheckBox("추세 폭발")
+        for chk in (self._chk_opt_est, self._chk_opt_gamma, self._chk_opt_trend):
+            chk.setStyleSheet(_CHK_QSS)
+            chk_row.addWidget(chk)
+        chk_row.addStretch()
+        opt_vb.addLayout(chk_row)
         row1.addLayout(opt_vb)
 
         # 선물분기점 MNQ (📈 자동입력)
@@ -576,6 +595,7 @@ class MarketJournalPanel(BasePanel):
         memo_vb.addWidget(self._lbl("메모"))
         self._f_memo = QLineEdit()
         self._f_memo.setStyleSheet(_INPUT)
+        self._f_memo.setPlaceholderText("자유 메모 입력...")
         memo_vb.addWidget(self._f_memo)
         row3.addLayout(memo_vb, 1)
 
@@ -967,7 +987,16 @@ class MarketJournalPanel(BasePanel):
         self._f_econ.setText(entry.get("econ", self._cal_data.get(key, "")))
         self._f_stock.setText(entry.get("stock",    ""))
         self._f_spy_spin.setText(entry.get("spy_spin", ""))
-        self._f_option.setText(opt_val)
+        # 옵션분기점: D+N 텍스트만 (태그 제외하고 순수 D+N 또는 직접입력 부분만)
+        _raw_opt = entry.get("option", "")
+        _opt_base = _raw_opt.split(" / ")[0] if " / " in _raw_opt else _raw_opt
+        # 체크박스 태그가 섞인 경우엔 D+N 패턴만 추출
+        import re as _re
+        _dn_match = _re.search(r"[Dd]\+\d+", _opt_base)
+        self._f_option.setText(_dn_match.group() if _dn_match else _opt_base)
+        self._chk_opt_est.setChecked(bool(entry.get("opt_est",   False)))
+        self._chk_opt_gamma.setChecked(bool(entry.get("opt_gamma", False)))
+        self._chk_opt_trend.setChecked(bool(entry.get("opt_trend", False)))
         self._f_futures.setText(entry.get("futures", ""))
         self._f_amt_stk.setText(entry.get("amt_stk",   ""))
         self._f_rate_stk.setText(entry.get("rate_stk",  ""))
@@ -993,11 +1022,22 @@ class MarketJournalPanel(BasePanel):
     def _on_save(self) -> None:
         if self._sel_date is None:
             return
+        # 옵션분기점: D+N 텍스트 + 체크박스 태그 합산
+        _opt_tags = []
+        if self._chk_opt_est.isChecked():   _opt_tags.append("옵션 분기 추정")
+        if self._chk_opt_gamma.isChecked(): _opt_tags.append("감마 폭발 가능성")
+        if self._chk_opt_trend.isChecked(): _opt_tags.append("옵션 추세 폭발 가능성")
+        _opt_base = self._f_option.text().strip()
+        _opt_val  = " / ".join(filter(None, [_opt_base] + _opt_tags))
+
         entry = {
             "econ":       self._f_econ.text().strip(),
             "stock":      self._f_stock.text().strip(),
             "spy_spin":   self._f_spy_spin.text().strip(),
-            "option":     self._f_option.text().strip(),
+            "option":     _opt_val,
+            "opt_est":    self._chk_opt_est.isChecked(),
+            "opt_gamma":  self._chk_opt_gamma.isChecked(),
+            "opt_trend":  self._chk_opt_trend.isChecked(),
             "futures":    self._f_futures.text().strip(),
             "amt_stk":    self._f_amt_stk.text().strip(),
             "rate_stk":   self._f_rate_stk.text().strip(),
