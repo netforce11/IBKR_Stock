@@ -33,7 +33,9 @@ from ui.panels.fill_history_panel import FillHistoryPanel
 from ui.panels.watchlist_panel import WatchlistPanel
 from ui.panels.settings_panel import SettingsPanel
 from ui.panels.market_journal_panel import MarketJournalPanel
+from ui.panels.scanner_panel import ScannerPanel
 from core.watchlist_manager import WatchlistManager
+from core.storage.scanner_storage import ScannerStorage
 from ui.status_bar_widget import HtsStatusBar
 
 log = logging.getLogger(__name__)
@@ -150,6 +152,7 @@ class MainWindow(QMainWindow):
             ("stock_chart",  "차트"),
             ("order",        "주문"),
             ("fill_history", "체결내역"),
+            ("scanner",         "🔍 스캐너"),
             ("settings",        "⚙ 설정"),
             ("market_journal",  "📋 시장일지"),
         ]
@@ -422,6 +425,13 @@ class MainWindow(QMainWindow):
             self._layout_mgr.add(self._chart_panel, title="차트")
         except ImportError as e:
             log.warning("차트 패널 로드 실패 (pyqtgraph?): %s", e)
+
+        # ── 스캐너 패널 ────────────────────────────────────
+        self._scanner_storage = ScannerStorage(DATA_DIR)
+        self._scanner_panel = ScannerPanel(
+            self._cmd_queue, self._bus, self._broker, self._scanner_storage)
+        self._scanner_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._scanner_panel, title="🔍 스캐너")
 
         # ── 설정 패널 ─────────────────────────────────────
         self._settings_panel = SettingsPanel(self._bus)

@@ -172,6 +172,16 @@ if IBAPI_OK:
                               start: str, end: str) -> None:
             self._b._on_historical_end(req_id)
 
+        # ── 스캐너 콜백 ───────────────────────────────────────
+        def scannerData(self, req_id: int, rank: int,
+                        contract_details: Any, distance: str,
+                        benchmark: str, projection: str,
+                        legs_str: str) -> None:
+            self._b._on_scanner_row(req_id, rank, contract_details)
+
+        def scannerDataEnd(self, req_id: int) -> None:
+            self._b._on_scanner_end(req_id)
+
 
 # ── IBKRBroker ─────────────────────────────────────────────────
 class IBKRBroker(BaseBroker):
@@ -208,6 +218,9 @@ class IBKRBroker(BaseBroker):
 
         # 분봉 요청 콜백
         self._hist_callbacks: Dict[int, list] = {}
+
+        # 스캐너 요청 임시 버퍼: req_id → {scan_code, rows[]}
+        self._scanner_buf: Dict[int, dict] = {}
 
     # ── BaseBroker 인터페이스 ────────────────────────────────
     def connect(self) -> None:
@@ -528,3 +541,70 @@ class IBKRBroker(BaseBroker):
                     callback(bars)
                 except Exception as e:
                     log.error("historical callback error: %s", e)
+
+    # ── 스캐너 ──────────────────────────────────────────────
+    def request_scanner(self, req_id: int, scan_code: str,
+                        filters: dict | None = None) -> None:
+        """
+        TWS 마켓 스캐너 조회.
+        결과: Topics.SCANNER_RESULT publish
+        filters 키: min_price, max_price, above_volume, market(STK/ETF)
+        """
+        if not self._connected or not self._ib:
+            self._bus.publish(Topics.SCANNER_ERROR,
+                              {"req_id": req_id, "msg": "브로커 미연결"})
+            return
+
+        try:
+            from ibapi.scanner import ScannerSubscription   # type: ignore
+        except ImportError:
+            self._bus.publish(Topics.SCANNER_ERROR,
+                              {"req_id": req_id, "msg": "ibapi 미설치"})
+            return
+
+        flt = filters or {}
+        sub            = ScannerSubscription()
+        sub.instrument = flt.get("market", "STK")
+        sub.locationCode = flt.get("location", "STK.US.MAJOR")
+        sub.scanCode   = scan_code
+        sub.abovePrice = flt.get("min_price",  1.0)
+        sub.belowPrice = flt.get("max_price",  0.0)   # 0 = 무제한
+        sub.aboveVolume = int(flt.get("above_volume", 0))
+        sub.marketCapAbove = flt.get("mktcap_above", 0.0)
+        sub.marketCapBelow = flt.get("mktcap_below", 0.0)
+        sub.numberOfRows = 50
+
+        self._scanner_buf[req_id] = {"scan_code": scan_code, "rows": []}
+        self._ib.reqScannerSubscription(req_id, sub, [], [])
+        log.info("Scanner request: req_id=%d scan_code=%s", req_id, scan_code)
+
+    def cancel_scanner(self, req_id: int) -> None:
+        if self._ib:
+            self._ib.cancelScannerSubscription(req_id)
+        self._scanner_buf.pop(req_id, None)
+
+    def _on_scanner_row(self, req_id: int, rank: int,
+                        contract_details: Any) -> None:
+        if req_id not in self._scanner_buf:
+            return
+        c = contract_details.contract
+        self._scanner_buf[req_id]["rows"].append({
+            "rank":     rank + 1,
+            "symbol":   c.symbol,
+            "exchange": c.primaryExch or c.exchange,
+            "currency": c.currency,
+        })
+
+    def _on_scanner_end(self, req_id: int) -> None:
+        buf = self._scanner_buf.pop(req_id, None)
+        if not buf:
+            return
+        import time
+        self._bus.publish(Topics.SCANNER_RESULT, {
+            "req_id":    req_id,
+            "scan_code": buf["scan_code"],
+            "results":   buf["rows"],
+            "ts":        time.time(),
+        })
+        log.info("Scanner result: req_id=%d rows=%d",
+                 req_id, len(buf["rows"]))
