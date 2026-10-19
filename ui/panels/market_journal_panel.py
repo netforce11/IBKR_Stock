@@ -1051,7 +1051,7 @@ class MarketJournalPanel(BasePanel):
         }
         self._journal[self._sel_date.isoformat()] = entry
 
-        # D+N 옵션 분기 자동 기록
+        # D+N 옵션 분기 자동 기록 — 체크박스 태그도 함께 전달
         for n_str in re.findall(r"[Dd]\+(\d+)", entry["option"]):
             n = int(n_str)
             if 1 <= n <= 30:
@@ -1059,13 +1059,24 @@ class MarketJournalPanel(BasePanel):
                 t_key    = target.isoformat()
                 t_entry  = self._journal.get(t_key, {})
                 existing = t_entry.get("option", "")
+                # 체크박스 태그 조합 (선택된 것만)
+                tags = " / ".join(filter(None, [
+                    "옵션 분기 타진",
+                    "옵션 분기 추정"        if entry.get("opt_est")   else "",
+                    "감마 폭발 가능성"      if entry.get("opt_gamma") else "",
+                    "옵션 추세 폭발 가능성" if entry.get("opt_trend") else "",
+                ]))
                 if "옵션 분기 타진" not in existing:
                     t_entry["option"] = (
-                        (existing + " / 옵션 분기 타진").strip(" /")
-                        if existing else "옵션 분기 타진")
+                        (existing + " / " + tags).strip(" /")
+                        if existing else tags)
+                    # 체크박스 상태도 대상 날짜에 복사
+                    t_entry["opt_est"]   = entry.get("opt_est",   False)
+                    t_entry["opt_gamma"] = entry.get("opt_gamma", False)
+                    t_entry["opt_trend"] = entry.get("opt_trend", False)
                     self._journal[t_key] = t_entry
-                log.info("[Journal] D+%d → %s 옵션 분기 타진 기록",
-                         n, target.isoformat())
+                log.info("[Journal] D+%d → %s 옵션 분기 타진 기록: %s",
+                         n, target.isoformat(), tags)
 
         self._save_journal()
         self._refresh_table()
