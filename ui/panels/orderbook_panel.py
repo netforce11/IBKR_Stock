@@ -53,7 +53,7 @@ def _table_style(text_color: str, border_color: str) -> str:
             color: {text_color};
             gridline-color: #D0D7DE;
             border: none;
-            font-size: 12px;
+            font-size: 15px;
             font-weight: bold;
         }}
         QTableWidget::item:selected {{
@@ -65,9 +65,9 @@ def _table_style(text_color: str, border_color: str) -> str:
             color: #333;
             border: none;
             border-bottom: 2px solid {border_color};
-            padding: 3px;
+            padding: 4px;
             font-weight: bold;
-            font-size: 11px;
+            font-size: 14px;
         }}
         QScrollBar:vertical {{
             background: #E8ECF0;
@@ -164,7 +164,7 @@ class OrderbookPanel(BasePanel):
         t.setStyleSheet(_table_style(text_color, border_color))
         t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # 행 높이 타이트하게
-        t.verticalHeader().setDefaultSectionSize(22)
+        t.verticalHeader().setDefaultSectionSize(28)
         return t
 
     def _make_fill_table(self) -> QTableWidget:
@@ -177,7 +177,7 @@ class OrderbookPanel(BasePanel):
         t.setShowGrid(False)
         t.setStyleSheet(_table_style(FILL_TEXT, BORDER_FILL))
         t.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        t.verticalHeader().setDefaultSectionSize(22)
+        t.verticalHeader().setDefaultSectionSize(28)
         return t
 
     def _build_info(self) -> QWidget:
@@ -193,7 +193,7 @@ class OrderbookPanel(BasePanel):
         def _label(txt: str, color: str = LABEL_DIM, bold: bool = False) -> QLabel:
             lb = QLabel(txt)
             lb.setStyleSheet(
-                f"color: {color}; font-size: 11px;"
+                f"color: {color}; font-size: 14px;"
                 + (" font-weight: bold;" if bold else "")
             )
             return lb
@@ -201,12 +201,12 @@ class OrderbookPanel(BasePanel):
         def _value(txt: str = "--", color: str = "#1A1A1A") -> QLabel:
             lb = QLabel(txt)
             lb.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            lb.setStyleSheet(f"color: {color}; font-size: 12px;")
+            lb.setStyleSheet(f"color: {color}; font-size: 15px;")
             return lb
 
         # 종목
         self._lbl_sym = _label(self._symbol, "#111827", bold=True)
-        self._lbl_sym.setStyleSheet("color:#111827; font-size:14px; font-weight:bold;")
+        self._lbl_sym.setStyleSheet("color:#111827; font-size:17px; font-weight:bold;")
         g.addWidget(self._lbl_sym, 0, 0, 1, 2)
 
         # 구분선
@@ -217,7 +217,7 @@ class OrderbookPanel(BasePanel):
         self._lbl_price = QLabel("--")
         self._lbl_price.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._lbl_price.setStyleSheet(
-            f"color: {PRICE_HL}; font-size: 20px; font-weight: bold; letter-spacing: 0.5px;")
+            f"color: {PRICE_HL}; font-size: 23px; font-weight: bold; letter-spacing: 0.5px;")
         g.addWidget(self._lbl_price, 2, 1)
 
         g.addWidget(self._hline("#2D333B"), 3, 0, 1, 2)
@@ -264,7 +264,7 @@ class OrderbookPanel(BasePanel):
         hdr.setStyleSheet(
             f"color: {title_color}; background: {BG_HEADER};"
             f"border-bottom: 2px solid {border};"
-            f"font-size: 11px; font-weight: bold; letter-spacing: 1px;"
+            f"font-size: 14px; font-weight: bold; letter-spacing: 1px;"
         )
         lay.addWidget(hdr)
         lay.addWidget(widget)

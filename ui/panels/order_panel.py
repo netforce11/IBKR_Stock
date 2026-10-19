@@ -17,13 +17,33 @@ from PyQt6.QtWidgets import (
     QFrame, QSizePolicy, QDoubleSpinBox, QSpinBox,
     QCheckBox, QGroupBox,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QEvent, QObject
 
 from shared.core.bus import DataBus
 from shared.core.topics import Topics
 from shared.ui.panels.base_panel import BasePanel
 
 log = logging.getLogger(__name__)
+
+
+class _DblClickSelectFilter(QObject):
+    """더블클릭 시 스핀박스 전체 선택 이벤트 필터"""
+    def __init__(self, target, parent=None):
+        super().__init__(parent)
+        self._target = target
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            self._target.selectAll()
+            return True
+        return super().eventFilter(obj, event)
+
+
+def _install_select_all(widget) -> None:
+    """더블클릭 시 전체 선택 — QDoubleSpinBox / QSpinBox 공통"""
+    f = _DblClickSelectFilter(widget, widget)
+    widget.installEventFilter(f)
+    widget._sel_all_filter = f   # GC 방지
 
 # ── 색상 상수 ────────────────────────────────────────────────
 _BG         = "#F5F5F5"
@@ -46,7 +66,7 @@ _BTN_DCA_STOP  = ("background:#B71C1C; color:#fff; font-weight:bold; font-size:1
 _INPUT_STYLE = (
     f"QComboBox, QDoubleSpinBox, QSpinBox {{"
     f"background:{_BG_INPUT}; color:{_TEXT}; border:1px solid {_BORDER};"
-    f"border-radius:3px; padding:2px 4px; font-size:12px;}}"
+    f"border-radius:3px; padding:4px 6px; font-size:12px; min-height:28px;}}"
 )
 _GROUP_STYLE = (
     "QGroupBox { font-size:11px; font-weight:bold; color:#1565C0;"
@@ -72,7 +92,7 @@ _STS_ERR    = "color:#C62828; font-size:10px; background:#FEE2E2; border-radius:
 class OrderPanel(BasePanel):
     PANEL_ID     = "order"
     TITLE        = "주문"
-    DEFAULT_SIZE = (300, 660)
+    DEFAULT_SIZE = (240, 660)
 
     def __init__(self, cmd_queue: queue.Queue, bus: DataBus, parent=None) -> None:
         super().__init__(bus, parent)
@@ -145,12 +165,16 @@ class OrderPanel(BasePanel):
         self._price_spin.setDecimals(2)
         self._price_spin.setSingleStep(0.01)
         self._price_spin.setPrefix("$")
+        self._price_spin.setMaximumWidth(130)
+        _install_select_all(self._price_spin)
         form.addRow("가격", self._price_spin)
 
         self._qty_spin = QSpinBox()
         self._qty_spin.setRange(1, 100_000)
         self._qty_spin.setValue(10)
         self._qty_spin.setSingleStep(10)
+        self._qty_spin.setMaximumWidth(110)
+        _install_select_all(self._qty_spin)
         form.addRow("수량", self._qty_spin)
 
         self._est_lbl = QLabel("$0.00")
@@ -219,17 +243,23 @@ class OrderPanel(BasePanel):
         self._dca_interval.setValue(5)
         self._dca_interval.setSuffix(" 분")
         self._dca_interval.setToolTip("매수 간격 (분 단위)")
+        self._dca_interval.setMaximumWidth(110)
+        _install_select_all(self._dca_interval)
         form.addRow("매수 간격", self._dca_interval)
 
         self._dca_qty = QSpinBox()
         self._dca_qty.setRange(1, 100_000)
         self._dca_qty.setValue(10)
         self._dca_qty.setSingleStep(10)
+        self._dca_qty.setMaximumWidth(110)
+        _install_select_all(self._dca_qty)
         form.addRow("1회 수량", self._dca_qty)
 
         self._dca_total = QSpinBox()
         self._dca_total.setRange(1, 999)
         self._dca_total.setValue(5)
+        self._dca_total.setMaximumWidth(110)
+        _install_select_all(self._dca_total)
         form.addRow("총  횟수", self._dca_total)
 
         lay.addLayout(form)
@@ -254,6 +284,8 @@ class OrderPanel(BasePanel):
         self._dca_pnl_threshold.setToolTip(
             "현재 포지션 손익률이 이 값 이하로 떨어지면\n"
             "추가매수를 일시정지합니다.")
+        self._dca_pnl_threshold.setMaximumWidth(110)
+        _install_select_all(self._dca_pnl_threshold)
         pause_lay.addRow("손익 기준", self._dca_pnl_threshold)
 
         self._dca_pause_min = QSpinBox()
@@ -261,6 +293,8 @@ class OrderPanel(BasePanel):
         self._dca_pause_min.setValue(30)
         self._dca_pause_min.setSuffix(" 분")
         self._dca_pause_min.setToolTip("손익 기준 초과 시 추가매수를 중지할 시간")
+        self._dca_pause_min.setMaximumWidth(110)
+        _install_select_all(self._dca_pause_min)
         pause_lay.addRow("중지 시간", self._dca_pause_min)
 
         lay.addWidget(pause_grp)
