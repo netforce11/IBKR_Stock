@@ -157,6 +157,7 @@ class OrderPanel(BasePanel):
 
         self._order_type = QComboBox()
         self._order_type.addItems(["지정가 (LMT)", "시장가 (MKT)"])
+        self._order_type.setMinimumHeight(32)
         self._order_type.currentIndexChanged.connect(self._on_type_changed)
         form.addRow("주문유형", self._order_type)
 
@@ -165,6 +166,7 @@ class OrderPanel(BasePanel):
         self._price_spin.setDecimals(2)
         self._price_spin.setSingleStep(0.01)
         self._price_spin.setPrefix("$")
+        self._price_spin.setMinimumHeight(32)
         self._price_spin.setMaximumWidth(130)
         _install_select_all(self._price_spin)
         form.addRow("가격", self._price_spin)
@@ -173,6 +175,7 @@ class OrderPanel(BasePanel):
         self._qty_spin.setRange(1, 100_000)
         self._qty_spin.setValue(10)
         self._qty_spin.setSingleStep(10)
+        self._qty_spin.setMinimumHeight(32)
         self._qty_spin.setMaximumWidth(110)
         _install_select_all(self._qty_spin)
         form.addRow("수량", self._qty_spin)
@@ -243,6 +246,7 @@ class OrderPanel(BasePanel):
         self._dca_interval.setValue(5)
         self._dca_interval.setSuffix(" 분")
         self._dca_interval.setToolTip("매수 간격 (분 단위)")
+        self._dca_interval.setMinimumHeight(32)
         self._dca_interval.setMaximumWidth(110)
         _install_select_all(self._dca_interval)
         form.addRow("매수 간격", self._dca_interval)
@@ -251,6 +255,7 @@ class OrderPanel(BasePanel):
         self._dca_qty.setRange(1, 100_000)
         self._dca_qty.setValue(10)
         self._dca_qty.setSingleStep(10)
+        self._dca_qty.setMinimumHeight(32)
         self._dca_qty.setMaximumWidth(110)
         _install_select_all(self._dca_qty)
         form.addRow("1회 수량", self._dca_qty)
@@ -258,6 +263,7 @@ class OrderPanel(BasePanel):
         self._dca_total = QSpinBox()
         self._dca_total.setRange(1, 999)
         self._dca_total.setValue(5)
+        self._dca_total.setMinimumHeight(32)
         self._dca_total.setMaximumWidth(110)
         _install_select_all(self._dca_total)
         form.addRow("총  횟수", self._dca_total)
@@ -284,6 +290,7 @@ class OrderPanel(BasePanel):
         self._dca_pnl_threshold.setToolTip(
             "현재 포지션 손익률이 이 값 이하로 떨어지면\n"
             "추가매수를 일시정지합니다.")
+        self._dca_pnl_threshold.setMinimumHeight(32)
         self._dca_pnl_threshold.setMaximumWidth(110)
         _install_select_all(self._dca_pnl_threshold)
         pause_lay.addRow("손익 기준", self._dca_pnl_threshold)
@@ -293,6 +300,7 @@ class OrderPanel(BasePanel):
         self._dca_pause_min.setValue(30)
         self._dca_pause_min.setSuffix(" 분")
         self._dca_pause_min.setToolTip("손익 기준 초과 시 추가매수를 중지할 시간")
+        self._dca_pause_min.setMinimumHeight(32)
         self._dca_pause_min.setMaximumWidth(110)
         _install_select_all(self._dca_pause_min)
         pause_lay.addRow("중지 시간", self._dca_pause_min)
