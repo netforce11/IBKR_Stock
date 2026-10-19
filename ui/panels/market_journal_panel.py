@@ -144,11 +144,34 @@ def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-# ── 비동기 주가 조회 스레드 ───────────────────────────────────
+# ── MNQ 환산 상수 ─────────────────────────────────────────────
+# NQ(MNQ) 레벨 추정 공식 (우선순위):
+#   1순위: MNQ=F 직접 조회 (yfinance)
+#   2순위: ^NDX (나스닥100 지수) ≈ NQ 선물 레벨 (basis 차이 ~±30pt)
+#   3순위: QQQ × 40  (QQQ 1달러 = NQ 40포인트, 역사적 근사)
+#   4순위: TQQQ × 284  (= TQQQ × 7.1 × 40, 레버리지 ETF 컴파운딩 반영)
+_QQQ_TO_NQ   = 40.0
+_TQQQ_TO_QQQ = 7.1   # 조정 가능 (레버리지 ETF 컴파운딩 반영)
+_MNQ_MARGIN  = 2_000  # MNQ 1계약 초기 증거금 (달러, 변동 있음)
+_MNQ_MULT    = 2.0    # MNQ 포인트당 달러
+
+# ── 항상 조회되는 고정 종목 ────────────────────────────────────
+# ^NDX = 나스닥100 지수 (MNQ 추정 최우선 소스)
+# NVDA = 엔비디아
+_FIXED_SYMBOLS = ["^NDX", "NVDA"]   # 사용자 입력과 별개로 항상 조회
+
+
+# ── 비동기 주가+MNQ 조회 스레드 ──────────────────────────────
 class _PriceFetchThread(QThread):
-    """yfinance 로 해당일 종가 조회 (메인 스레드 블로킹 방지)"""
-    done  = pyqtSignal(str)   # "TQQQ 123.45 / SQQQ 45.67" 형태
-    error = pyqtSignal(str)
+    """yfinance 로 해당일 종가 및 MNQ 선물 조회 (메인 스레드 블로킹 방지)
+
+    stock_done : "TQQQ 123.45 / SQQQ 45.67" 형태 — _f_stock 에 입력
+    mnq_done   : (표시 텍스트, MNQ 숫자값)    — _f_futures 에 입력
+    error      : 에러 메시지
+    """
+    stock_done = pyqtSignal(str)
+    mnq_done   = pyqtSignal(str, float)   # (표시문자열, 숫자값)
+    error      = pyqtSignal(str)
 
     def __init__(self, symbols: list[str], target_date: date, parent=None):
         super().__init__(parent)
@@ -161,26 +184,101 @@ class _PriceFetchThread(QThread):
         except ImportError:
             self.error.emit("yfinance 미설치 (pip install yfinance)")
             return
+
+        start = self._date
+        end   = self._date + timedelta(days=4)   # 주말/공휴일 대비 여유
+
+        # ── 1. 주식 종가 조회 (사용자 입력 + 고정 종목) ──────
+        # 고정 종목(_FIXED_SYMBOLS)은 별도 섹션으로 표시
+        parts_user:  list[str] = []   # 사용자 입력 종목 결과
+        parts_fixed: list[str] = []   # 고정 종목 결과 (나스닥 지수, NVDA)
+        tqqq_close = 0.0
+        qqq_close  = 0.0
+        ndx_close  = 0.0
+
+        all_syms = list(self._symbols) + _FIXED_SYMBOLS
         try:
-            from datetime import datetime as _dt
-            start = self._date
-            end   = self._date + timedelta(days=4)   # 주말/공휴일 대비 여유
-            parts = []
-            for sym in self._symbols:
+            for sym in all_syms:
+                is_fixed = sym in _FIXED_SYMBOLS
                 ticker = yf.Ticker(sym)
                 hist   = ticker.history(start=start.isoformat(),
                                         end=end.isoformat(),
                                         auto_adjust=True)
                 if hist.empty:
-                    parts.append(f"{sym} N/A")
-                    continue
-                # start 날짜 이후 첫 행 사용
-                row = hist.iloc[0]
-                close = float(row["Close"])
-                parts.append(f"{sym} {close:.2f}")
-            self.done.emit(" / ".join(parts))
+                    entry = f"{sym} N/A"
+                else:
+                    close = float(hist.iloc[0]["Close"])
+                    # 나스닥100 지수는 정수, 주식은 소수점 2자리
+                    if sym == "^NDX":
+                        entry = f"NDX {close:,.0f}"
+                        ndx_close = close
+                    else:
+                        entry = f"{sym} {close:.2f}"
+                    if sym == "TQQQ":
+                        tqqq_close = close
+                    elif sym == "QQQ":
+                        qqq_close = close
+
+                if is_fixed:
+                    parts_fixed.append(entry)
+                else:
+                    parts_user.append(entry)
+
+            # 고정 종목을 뒤에 (│ 구분)
+            all_parts = parts_user + (
+                [" │ " + " | ".join(parts_fixed)] if parts_fixed else []
+            )
+            self.stock_done.emit("".join(all_parts))
         except Exception as e:
             self.error.emit(str(e))
+            return
+
+        # ── 2. MNQ=F 직접 조회 ────────────────────────────
+        mnq_val = 0.0
+        mnq_src = ""
+        try:
+            mnq_tick = yf.Ticker("MNQ=F")
+            hist = mnq_tick.history(start=start.isoformat(),
+                                    end=end.isoformat(),
+                                    auto_adjust=True)
+            if not hist.empty:
+                mnq_val = float(hist.iloc[0]["Close"])
+                mnq_src = "직접"
+        except Exception:
+            pass
+
+        # ── 3. MNQ 폴백: ^NDX ≈ NQ 레벨 (최우선 추정) ──────
+        if mnq_val == 0 and ndx_close > 0:
+            mnq_val = ndx_close          # NDX ≈ NQ 선물 (basis ~±30pt)
+            mnq_src = f"NDX {ndx_close:,.0f}→추정"
+
+        # ── 4. MNQ 폴백: QQQ × 40 ────────────────────────────
+        if mnq_val == 0 and qqq_close == 0:
+            try:
+                q = yf.Ticker("QQQ")
+                h = q.history(start=start.isoformat(),
+                               end=end.isoformat(),
+                               auto_adjust=True)
+                if not h.empty:
+                    qqq_close = float(h.iloc[0]["Close"])
+            except Exception:
+                pass
+
+        if mnq_val == 0 and qqq_close > 0:
+            mnq_val = round(qqq_close * _QQQ_TO_NQ)
+            mnq_src = f"QQQ {qqq_close:.2f}→추정"
+
+        # ── 5. MNQ 폴백: TQQQ × 7.1 × 40 ────────────────────
+        if mnq_val == 0 and tqqq_close > 0:
+            qqq_est = tqqq_close * _TQQQ_TO_QQQ
+            mnq_val = round(qqq_est * _QQQ_TO_NQ)
+            mnq_src = f"TQQQ {tqqq_close:.2f}×{_TQQQ_TO_QQQ}×40→추정"
+
+        if mnq_val > 0:
+            label = (f"MNQ {mnq_val:,.0f}"
+                     if mnq_src == "직접"
+                     else f"MNQ ~{mnq_val:,.0f} ({mnq_src})")
+            self.mnq_done.emit(label, float(mnq_val))
 
 
 class MarketJournalPanel(BasePanel):
@@ -194,6 +292,7 @@ class MarketJournalPanel(BasePanel):
         self._view_weeks = 1            # 1 or 2
         self._sel_date: date | None = None
         self._fetch_thread = None       # 주가 조회 스레드
+        self._mnq_price: float = 0.0   # 마지막으로 조회된 MNQ 가격
         super().__init__(bus, parent)
         self._load_journal()
         self._load_tradier_cal()
@@ -337,21 +436,23 @@ class MarketJournalPanel(BasePanel):
         # 주식분기점 + 📈 조회 버튼
         stk_vb = QVBoxLayout()
         stk_vb.setSpacing(2)
-        stk_lbl = QLabel("주식분기점 — 종목 입력 후 📈 조회")
+        stk_lbl = QLabel(
+            "주식분기점  ( 나스닥 지수 | NVDA | 모두 항상 같이 조회 )")
         stk_lbl.setStyleSheet(_LABEL)
         stk_inner = QHBoxLayout()
         stk_inner.setSpacing(4)
         self._f_stock = QLineEdit()
         self._f_stock.setStyleSheet(_INPUT)
-        self._f_stock.setPlaceholderText("TQQQ,SQQQ  또는 직접 입력")
-        self._f_stock.setFixedWidth(170)
+        self._f_stock.setPlaceholderText("TQQQ,SQQQ  (나스닥지수·NVDA 자동포함)")
+        self._f_stock.setFixedWidth(210)
         self._btn_fetch = QPushButton("📈 조회")
         self._btn_fetch.setStyleSheet(_BTN_FETCH)
         self._btn_fetch.setFixedWidth(60)
         self._btn_fetch.setToolTip(
-            "종목명을 콤마로 구분 입력 후 클릭\n"
-            "예: TQQQ,SQQQ\n"
-            "해당 날짜의 종가를 자동으로 가져옵니다."
+            "종목명 콤마 입력 후 클릭 (예: TQQQ,SQQQ)\n"
+            "▸ 나스닥 지수(^NDX) + NVDA 는 항상 자동 포함\n"
+            "▸ MNQ 선물 가격도 동시에 조회·추정\n"
+            "해당 날짜 종가를 자동으로 가져옵니다."
         )
         self._btn_fetch.clicked.connect(self._fetch_stock_price)
         stk_inner.addWidget(self._f_stock)
@@ -373,8 +474,23 @@ class MarketJournalPanel(BasePanel):
         opt_vb.addWidget(self._f_option)
         row1.addLayout(opt_vb)
 
-        vb, self._f_futures = _field("선물분기점 MNQ (상단/하단)", 150)
-        row1.addLayout(vb)
+        # 선물분기점 MNQ — 📈 조회 시 자동 입력
+        fut_vb = QVBoxLayout()
+        fut_vb.setSpacing(2)
+        fut_lbl = QLabel("선물분기점 MNQ  (📈 조회 시 자동입력)")
+        fut_lbl.setStyleSheet(_LABEL)
+        self._f_futures = QLineEdit()
+        self._f_futures.setStyleSheet(_INPUT)
+        self._f_futures.setPlaceholderText("MNQ 가격 자동조회 또는 직접입력")
+        self._f_futures.setFixedWidth(200)
+        # 계약수 힌트 라벨 (MNQ 가격 조회 후 증거금 기반 업데이트)
+        self._lbl_mnq_hint = QLabel("")
+        self._lbl_mnq_hint.setStyleSheet(
+            "QLabel { color:#1B5E20; font-size:10px; }")
+        fut_vb.addWidget(fut_lbl)
+        fut_vb.addWidget(self._f_futures)
+        fut_vb.addWidget(self._lbl_mnq_hint)
+        row1.addLayout(fut_vb)
         root.addLayout(row1)
 
         # ── 행 2: 증거금 / 기대수익 3개 / 합산손익 / 메모 ────
@@ -420,6 +536,8 @@ class MarketJournalPanel(BasePanel):
         # 합산 손익 실시간 계산 연결
         for f in (self._f_exp_stk, self._f_exp_opt, self._f_exp_fut):
             f.textChanged.connect(self._update_total)
+        # 증거금 변경 → MNQ 계약수 힌트 갱신
+        self._f_margin.textChanged.connect(self._update_mnq_hint)
 
         # ── 저장/취소 버튼 ─────────────────────────────────
         btn_row = QHBoxLayout()
@@ -437,48 +555,95 @@ class MarketJournalPanel(BasePanel):
         return w
 
     # ══════════════════════════════════════════════════════════
-    # 주가 조회 (비동기)
+    # 주가 + MNQ 조회 (비동기)
     # ══════════════════════════════════════════════════════════
     def _fetch_stock_price(self) -> None:
-        """📈 버튼 클릭 → 종목명 파싱 → yfinance 비동기 조회"""
+        """📈 버튼 클릭 → 종목명 파싱 → yfinance 비동기 조회
+        - 사용자 입력 종목 + 나스닥지수(^NDX) + NVDA 항상 포함
+        - MNQ=F 동시 조회 (실패 시 ^NDX → QQQ → TQQQ 순으로 추정)
+        """
         if self._sel_date is None:
             return
-        raw = self._f_stock.text().strip()
-        if not raw:
-            self._f_stock.setPlaceholderText("종목명을 입력하세요 (예: TQQQ,SQQQ)")
-            return
 
-        # 콤마/슬래시/공백으로 분리, 가격 숫자 제거 → 순수 종목코드만
-        symbols = [
-            re.sub(r"[^A-Za-z]", "", s)
-            for s in re.split(r"[,/ ]+", raw)
-        ]
-        symbols = [s.upper() for s in symbols if s]
-        if not symbols:
-            return
+        raw = self._f_stock.text().strip()
+        # 사용자 입력 종목 파싱 (숫자/특수문자 제거 → 순수 티커)
+        symbols = []
+        if raw:
+            symbols = [
+                re.sub(r"[^A-Za-z]", "", s).upper()
+                for s in re.split(r"[,/ │|]+", raw)
+            ]
+            symbols = [s for s in symbols if s and s not in _FIXED_SYMBOLS]
 
         self._btn_fetch.setEnabled(False)
         self._btn_fetch.setText("조회중…")
+        self._lbl_mnq_hint.setText("MNQ 조회 중…")
 
         self._fetch_thread = _PriceFetchThread(symbols, self._sel_date, self)
-        self._fetch_thread.done.connect(
+        self._fetch_thread.stock_done.connect(
             self._on_price_fetched, Qt.ConnectionType.QueuedConnection)
+        self._fetch_thread.mnq_done.connect(
+            self._on_mnq_fetched, Qt.ConnectionType.QueuedConnection)
         self._fetch_thread.error.connect(
             self._on_price_error, Qt.ConnectionType.QueuedConnection)
+        self._fetch_thread.finished.connect(
+            self._on_fetch_finished, Qt.ConnectionType.QueuedConnection)
         self._fetch_thread.start()
 
     @pyqtSlot(str)
     def _on_price_fetched(self, text: str) -> None:
         self._f_stock.setText(text)
+
+    @pyqtSlot(str, float)
+    def _on_mnq_fetched(self, text: str, mnq_val: float) -> None:
+        """MNQ 가격 자동 입력 + 계약수 힌트 갱신"""
+        self._f_futures.setText(text)
+        self._mnq_price = mnq_val   # 계약수 계산에 사용
+        self._update_mnq_hint()
+
+    @pyqtSlot()
+    def _on_fetch_finished(self) -> None:
         self._btn_fetch.setEnabled(True)
         self._btn_fetch.setText("📈 조회")
 
     @pyqtSlot(str)
     def _on_price_error(self, err: str) -> None:
         log.warning("[Journal] 주가 조회 실패: %s", err)
-        self._f_stock.setPlaceholderText(f"조회 실패: {err}")
+        self._lbl_mnq_hint.setText(f"조회 실패: {err}")
         self._btn_fetch.setEnabled(True)
         self._btn_fetch.setText("📈 조회")
+
+    def _update_mnq_hint(self) -> None:
+        """증거금 or MNQ 가격 변경 시 계약수 + 포인트당 손익 힌트 표시"""
+        mnq_price = getattr(self, "_mnq_price", 0.0)
+        try:
+            margin = float(
+                self._f_margin.text().replace(",", "").replace("$", "").strip()
+                or "0"
+            )
+        except ValueError:
+            margin = 0.0
+
+        if margin <= 0:
+            self._lbl_mnq_hint.setText(
+                f"💡 MNQ $2/pt · 1계약≈${_MNQ_MARGIN:,} 증거금")
+            return
+
+        contracts = margin / _MNQ_MARGIN
+        pnl_per_pt = contracts * _MNQ_MULT
+
+        if mnq_price > 0:
+            # 1% 이동 시 예상 P&L
+            one_pct_pts = mnq_price * 0.01
+            one_pct_pnl = one_pct_pts * pnl_per_pt
+            self._lbl_mnq_hint.setText(
+                f"💡 {contracts:.1f}계약 · $2/pt · "
+                f"1%이동({one_pct_pts:.0f}pt) → ${one_pct_pnl:+,.0f}"
+            )
+        else:
+            self._lbl_mnq_hint.setText(
+                f"💡 {contracts:.1f}계약 · ${pnl_per_pt:.1f}/pt"
+            )
 
     # ══════════════════════════════════════════════════════════
     # 합산 손익 실시간 계산
