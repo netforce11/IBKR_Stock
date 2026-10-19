@@ -427,11 +427,16 @@ class MainWindow(QMainWindow):
             log.warning("차트 패널 로드 실패 (pyqtgraph?): %s", e)
 
         # ── 스캐너 패널 ────────────────────────────────────
-        self._scanner_storage = ScannerStorage(DATA_DIR)
-        self._scanner_panel = ScannerPanel(
-            self._cmd_queue, self._bus, self._broker, self._scanner_storage)
-        self._scanner_panel.set_shortcut_manager(self._shortcut_mgr)
-        self._layout_mgr.add(self._scanner_panel, title="🔍 스캐너")
+        try:
+            self._scanner_storage = ScannerStorage(DATA_DIR)
+            self._scanner_panel = ScannerPanel(
+                self._cmd_queue, self._bus, self._broker, self._scanner_storage)
+            self._scanner_panel.set_shortcut_manager(self._shortcut_mgr)
+            self._layout_mgr.add(self._scanner_panel, title="🔍 스캐너")
+            log.info("ScannerPanel 등록 완료 (PANEL_ID=%s)", self._scanner_panel.PANEL_ID)
+        except Exception as e:
+            log.exception("ScannerPanel 로드 실패: %s", e)
+            self._scanner_panel = None
 
         # ── 설정 패널 ─────────────────────────────────────
         self._settings_panel = SettingsPanel(self._bus)
@@ -582,9 +587,12 @@ class MainWindow(QMainWindow):
         lay.addLayout(btn_row)
         cancel_btn.clicked.connect(dlg.reject)
 
+        from shared.ui.layout_manager import TabGroupSubWindow
         _all: list[tuple[str, str]] = sorted(
             [(pid, sub.windowTitle())
-             for pid, sub in self._layout_mgr._subs.items()],
+             for pid, sub in self._layout_mgr._subs.items()
+             if not pid.startswith("__tabgroup_")   # 탭그룹 컨테이너 자체는 숨김
+             and not isinstance(sub, TabGroupSubWindow)],
             key=lambda x: x[1]
         )
 
