@@ -588,11 +588,14 @@ class MainWindow(QMainWindow):
         cancel_btn.clicked.connect(dlg.reject)
 
         from shared.ui.layout_manager import TabGroupSubWindow
+        # ── 진단 로그: _subs 전체 목록 출력 ──────────────────
+        log.debug("[패널찾기] _subs 목록: %s",
+                  {pid: type(sub).__name__
+                   for pid, sub in self._layout_mgr._subs.items()})
         _all: list[tuple[str, str]] = sorted(
             [(pid, sub.windowTitle())
              for pid, sub in self._layout_mgr._subs.items()
-             if not pid.startswith("__tabgroup_")   # 탭그룹 컨테이너 자체는 숨김
-             and not isinstance(sub, TabGroupSubWindow)],
+             if not pid.startswith("__tabgroup_")],   # 탭그룹 컨테이너 자체는 숨김
             key=lambda x: x[1]
         )
 
