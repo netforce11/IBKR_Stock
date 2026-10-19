@@ -25,7 +25,8 @@ def _setup_logging() -> None:
     )
     # ibapi 내부 디버그 로그 억제 (tickSize, decoder, client 노이즈)
     for _noisy in ("ibapi.client", "ibapi.decoder", "ibapi.wrapper",
-                   "ibapi.connection", "ibapi.reader", "ibapi.comm"):
+                   "ibapi.connection", "ibapi.reader", "ibapi.comm",
+                   "ibapi.utils", "ibapi.order", "ibapi.contract"):
         logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
