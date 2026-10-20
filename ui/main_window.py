@@ -301,6 +301,15 @@ class MainWindow(QMainWindow):
     def _on_broker_connect_ok(self, broker) -> None:
         log.info("Boot Step2: Broker connect OK")
         self._broker = broker
+        # IBKRBroker: ibapi 스레드 → tick_queue → Qt 메인 스레드 드레인
+        # 50ms 간격으로 메인 스레드에서 tick_queue 소비 (힙 손상 방지)
+        if hasattr(broker, "drain_tick_queue"):
+            from PyQt6.QtCore import QTimer
+            self._tick_drain_timer = QTimer(self)
+            self._tick_drain_timer.setInterval(50)
+            self._tick_drain_timer.timeout.connect(broker.drain_tick_queue)
+            self._tick_drain_timer.start()
+            log.info("tick_queue drain timer 시작 (50ms)")
         self._boot_step3()
 
     def _on_broker_connect_fail(self, err_msg: str) -> None:

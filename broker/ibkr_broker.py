@@ -122,65 +122,67 @@ if IBAPI_OK:
                 self._b._connect_error_code = 326
                 self._b._connect_event.set()
 
-        # ── 시세 콜백 ─────────────────────────────────────────
+        # ── 시세 콜백 (ibapi 스레드 → tick_queue만 사용) ──────
+        # PyQt6에서 ibapi C 스레드가 직접 bus.publish → Qt 접근하면
+        # malloc 힙 손상 발생 → 큐에만 넣고 QTimer가 메인 스레드에서 소비
         def tickPrice(self, req_id: int, tick_type: int,
                       price: float, attrib: Any) -> None:
-            self._b._on_tick_price(req_id, tick_type, price)
+            self._b._tick_queue.put_nowait(
+                ("tick_price", req_id, tick_type, price))
 
         def tickSize(self, req_id: int, tick_type: int, size: int) -> None:
-            self._b._on_tick_size(req_id, tick_type, size)
+            self._b._tick_queue.put_nowait(
+                ("tick_size", req_id, tick_type, size))
 
         # ── 주문/체결 콜백 ────────────────────────────────────
         def orderStatus(self, order_id: int, status: str, filled: float,
                         remaining: float, avg_fill_price: float,
                         perm_id: int, parent_id: int, last_fill_price: float,
                         client_id: int, why_held: str, mkt_cap_price: float) -> None:
-            self._b._on_order_status(
-                order_id, status, filled, avg_fill_price)
+            self._b._tick_queue.put_nowait(
+                ("order_status", order_id, status, filled, avg_fill_price))
 
         def execDetails(self, req_id: int, contract: Any, execution: Any) -> None:
-            self._b._on_exec(contract, execution)
+            self._b._tick_queue.put_nowait(
+                ("exec_details", contract, execution))
 
         # ── 포지션/잔고 콜백 ─────────────────────────────────
         def position(self, account: str, contract: Any,
                      position: float, avg_cost: float) -> None:
             if contract.secType != "STK":
                 return
-            self._b._bus.publish(
-                Topics.portfolio_position(contract.symbol),
-                {
-                    "symbol":   contract.symbol,
-                    "qty":      int(position),
-                    "avg_cost": round(avg_cost, 4),
-                })
+            self._b._tick_queue.put_nowait(
+                ("position", contract.symbol, int(position), round(avg_cost, 4)))
 
         def positionEnd(self) -> None:
             pass
 
         def accountSummary(self, req_id: int, account: str,
                            tag: str, value: str, currency: str) -> None:
-            self._b._on_account_summary(tag, value)
+            self._b._tick_queue.put_nowait(
+                ("account_summary", tag, value))
 
         def accountSummaryEnd(self, req_id: int) -> None:
             pass
 
         # ── 분봉 히스토리 콜백 ────────────────────────────────
         def historicalData(self, req_id: int, bar: Any) -> None:
-            self._b._on_historical_bar(req_id, bar)
+            self._b._tick_queue.put_nowait(("historical_bar", req_id, bar))
 
         def historicalDataEnd(self, req_id: int,
                               start: str, end: str) -> None:
-            self._b._on_historical_end(req_id)
+            self._b._tick_queue.put_nowait(("historical_end", req_id))
 
         # ── 스캐너 콜백 ───────────────────────────────────────
         def scannerData(self, req_id: int, rank: int,
                         contract_details: Any, distance: str,
                         benchmark: str, projection: str,
                         legs_str: str) -> None:
-            self._b._on_scanner_row(req_id, rank, contract_details)
+            self._b._tick_queue.put_nowait(
+                ("scanner_row", req_id, rank, contract_details))
 
         def scannerDataEnd(self, req_id: int) -> None:
-            self._b._on_scanner_end(req_id)
+            self._b._tick_queue.put_nowait(("scanner_end", req_id))
 
 
 # ── IBKRBroker ─────────────────────────────────────────────────
@@ -212,6 +214,11 @@ class IBKRBroker(BaseBroker):
 
         # 시세 캐시 (tickPrice 여러 타입 조합)
         self._price_cache: Dict[str, Dict] = {}
+
+        # ibapi 스레드 → Qt 메인 스레드 안전 전달용 큐
+        # ibapi 콜백에서 직접 bus.publish 하면 힙 손상 발생 (PyQt6 C 스레드 제약)
+        # → 이 큐에만 넣고, Qt 메인 스레드 QTimer가 드레인
+        self._tick_queue: SyncQueue = SyncQueue()
 
         # 주문 추적: order_id → internal_id
         self._order_map: Dict[int, str] = {}
@@ -418,6 +425,56 @@ class IBKRBroker(BaseBroker):
             1,             # formatDate=1 (문자열)
             False, []
         )
+
+    # ── Qt 메인 스레드에서 tick_queue 소비 ─────────────────
+    def drain_tick_queue(self, max_items: int = 200) -> None:
+        """
+        QTimer(50ms)로 Qt 메인 스레드에서 호출.
+        ibapi 스레드가 넣은 이벤트를 메인 스레드에서 안전하게 처리.
+        """
+        count = 0
+        while count < max_items:
+            try:
+                item = self._tick_queue.get_nowait()
+            except Exception:
+                break
+            count += 1
+            kind = item[0]
+            try:
+                if kind == "tick_price":
+                    _, req_id, tick_type, price = item
+                    self._on_tick_price(req_id, tick_type, price)
+                elif kind == "tick_size":
+                    _, req_id, tick_type, size = item
+                    self._on_tick_size(req_id, tick_type, size)
+                elif kind == "order_status":
+                    _, order_id, status, filled, avg_price = item
+                    self._on_order_status(order_id, status, filled, avg_price)
+                elif kind == "exec_details":
+                    _, contract, execution = item
+                    self._on_exec(contract, execution)
+                elif kind == "position":
+                    _, symbol, qty, avg_cost = item
+                    self._bus.publish(
+                        Topics.portfolio_position(symbol),
+                        {"symbol": symbol, "qty": qty, "avg_cost": avg_cost})
+                elif kind == "account_summary":
+                    _, tag, value = item
+                    self._on_account_summary(tag, value)
+                elif kind == "historical_bar":
+                    _, req_id, bar = item
+                    self._on_historical_bar(req_id, bar)
+                elif kind == "historical_end":
+                    _, req_id = item
+                    self._on_historical_end(req_id)
+                elif kind == "scanner_row":
+                    _, req_id, rank, contract_details = item
+                    self._on_scanner_row(req_id, rank, contract_details)
+                elif kind == "scanner_end":
+                    _, req_id = item
+                    self._on_scanner_end(req_id)
+            except Exception:
+                log.exception("drain_tick_queue 처리 오류: %s", item)
 
     # ── IBKR 콜백 핸들러 ────────────────────────────────────
     def _on_tick_price(self, req_id: int,
