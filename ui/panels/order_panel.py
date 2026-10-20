@@ -1,10 +1,10 @@
 # ui/panels/order_panel.py
-# 주문 패널 — 기본 주문 + 분(分)단위 분할매수(DCA) + 손익 기반 추가매수 일시정지
+# 주문 패널 — 기본 주문 + 분(分)단위 분할매수(DCA) + 소수점(Fractional) 주문
 #
 # [기능]
 #   - 기본 주문: 지정가/시장가, 매수/매도, F1/F2/F3 단축키
 #   - DCA: 분 단위 간격으로 자동 분할 매수 (F4 시작 / F5 중지)
-#   - 손익 기반 일시정지: 현재 포지션 손익 < 기준% 시 지정 시간(분)만큼 추가매수 중지
+#   - 소수점 주문: 금액 기준 주문 (ex. $500어치), 소수점 수량 직접 입력
 
 from __future__ import annotations
 import queue
@@ -62,6 +62,16 @@ _BTN_DCA_START = ("background:#2E7D32; color:#fff; font-weight:bold; font-size:1
                   "padding:6px; border:none; border-radius:4px;")
 _BTN_DCA_STOP  = ("background:#B71C1C; color:#fff; font-weight:bold; font-size:12px;"
                   "padding:6px; border:none; border-radius:4px;")
+_BTN_FRAC_BUY  = ("background:#1565C0; color:#fff; font-weight:bold; font-size:12px;"
+                  "padding:6px; border:none; border-radius:4px;")
+_BTN_FRAC_SELL = ("background:#C62828; color:#fff; font-weight:bold; font-size:12px;"
+                  "padding:6px; border:none; border-radius:4px;")
+_GROUP_FRAC_STYLE = (
+    "QGroupBox { font-size:11px; font-weight:bold; color:#7C3AED;"
+    " border:1px solid #DDD6FE; border-radius:4px;"
+    " margin-top:8px; padding-top:6px; }"
+    "QGroupBox::title { subcontrol-origin:margin; left:8px; padding:0 4px; }"
+)
 
 _INPUT_STYLE = (
     f"QComboBox, QDoubleSpinBox, QSpinBox {{"
@@ -228,6 +238,11 @@ class OrderPanel(BasePanel):
         # ⑧ 분할매수(DCA) 섹션
         self._build_dca_section()
 
+        self._layout.addWidget(self._hline())
+
+        # ⑨ 소수점(Fractional) 주문 섹션
+        self._build_fractional_section()
+
         self._layout.addStretch()
 
     def _build_dca_section(self) -> None:
@@ -335,6 +350,127 @@ class OrderPanel(BasePanel):
         lay.addLayout(dca_btn_row)
 
         self._layout.addWidget(grp)
+
+    def _build_fractional_section(self) -> None:
+        """소수점(Fractional Shares) 주문 섹션"""
+        grp = QGroupBox("소수점 주문 (Fractional)")
+        grp.setStyleSheet(_GROUP_FRAC_STYLE)
+        lay = QVBoxLayout(grp)
+        lay.setSpacing(6)
+        lay.setContentsMargins(8, 14, 8, 8)
+
+        form = QFormLayout()
+        form.setSpacing(4)
+
+        # 입력 방식: 금액 기준 / 수량 직접
+        self._frac_mode = QComboBox()
+        self._frac_mode.addItems(["금액 기준 ($)", "수량 직접 입력"])
+        self._frac_mode.setMinimumHeight(30)
+        self._frac_mode.currentIndexChanged.connect(self._on_frac_mode_changed)
+        form.addRow("입력 방식", self._frac_mode)
+
+        # 금액 입력 (금액 기준 모드)
+        self._frac_amount = QDoubleSpinBox()
+        self._frac_amount.setRange(1.0, 1_000_000.0)
+        self._frac_amount.setValue(500.0)
+        self._frac_amount.setDecimals(2)
+        self._frac_amount.setSingleStep(100.0)
+        self._frac_amount.setPrefix("$")
+        self._frac_amount.setMinimumHeight(30)
+        self._frac_amount.setMaximumWidth(130)
+        _install_select_all(self._frac_amount)
+        self._frac_amount.valueChanged.connect(self._update_frac_preview)
+        form.addRow("주문 금액", self._frac_amount)
+        self._frac_amount_row = (form.labelForField(self._frac_amount),
+                                 self._frac_amount)
+
+        # 소수점 수량 직접 입력
+        self._frac_qty = QDoubleSpinBox()
+        self._frac_qty.setRange(0.0001, 100_000.0)
+        self._frac_qty.setValue(0.5)
+        self._frac_qty.setDecimals(4)
+        self._frac_qty.setSingleStep(0.1)
+        self._frac_qty.setSuffix(" 주")
+        self._frac_qty.setMinimumHeight(30)
+        self._frac_qty.setMaximumWidth(130)
+        _install_select_all(self._frac_qty)
+        self._frac_qty.valueChanged.connect(self._update_frac_preview)
+        self._frac_qty.setVisible(False)
+        form.addRow("수량", self._frac_qty)
+        self._frac_qty_row = (form.labelForField(self._frac_qty),
+                              self._frac_qty)
+        form.labelForField(self._frac_qty).setVisible(False)
+
+        # 주문가격 (지정가)
+        self._frac_price = QDoubleSpinBox()
+        self._frac_price.setRange(0.0, 999_999.0)
+        self._frac_price.setDecimals(2)
+        self._frac_price.setSingleStep(0.01)
+        self._frac_price.setPrefix("$")
+        self._frac_price.setMinimumHeight(30)
+        self._frac_price.setMaximumWidth(130)
+        _install_select_all(self._frac_price)
+        self._frac_price.valueChanged.connect(self._update_frac_preview)
+        form.addRow("지정가 (0=시장가)", self._frac_price)
+
+        lay.addLayout(form)
+
+        # 미리보기 레이블
+        self._frac_preview = QLabel("--")
+        self._frac_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._frac_preview.setStyleSheet(
+            "background:#EEF2FF; color:#3730A3; font-size:11px;"
+            " font-weight:bold; border-radius:3px; padding:4px;")
+        self._frac_preview.setWordWrap(True)
+        lay.addWidget(self._frac_preview)
+
+        # 매수 / 매도 버튼
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self._btn_frac_buy = QPushButton("소수점 매수")
+        self._btn_frac_buy.setStyleSheet(_BTN_FRAC_BUY)
+        self._btn_frac_buy.setMinimumHeight(36)
+        self._btn_frac_buy.clicked.connect(lambda: self._place_fractional("BUY"))
+        self._btn_frac_sell = QPushButton("소수점 매도")
+        self._btn_frac_sell.setStyleSheet(_BTN_FRAC_SELL)
+        self._btn_frac_sell.setMinimumHeight(36)
+        self._btn_frac_sell.clicked.connect(lambda: self._place_fractional("SELL"))
+        btn_row.addWidget(self._btn_frac_buy)
+        btn_row.addWidget(self._btn_frac_sell)
+        lay.addLayout(btn_row)
+
+        self._layout.addWidget(grp)
+        self._update_frac_preview()
+
+    def _on_frac_mode_changed(self, idx: int) -> None:
+        """금액 기준 ↔ 수량 직접 전환"""
+        by_amount = (idx == 0)
+        self._frac_amount.setVisible(by_amount)
+        self._frac_amount_row[0].setVisible(by_amount)
+        self._frac_qty.setVisible(not by_amount)
+        self._frac_qty_row[0].setVisible(not by_amount)
+        self._update_frac_preview()
+
+    def _update_frac_preview(self) -> None:
+        """소수점 주문 미리보기 갱신"""
+        price = self._frac_price.value()
+        if price <= 0:
+            price = self._last_price
+        if price <= 0:
+            self._frac_preview.setText("현재가 없음 — 가격을 입력하세요")
+            return
+
+        by_amount = (self._frac_mode.currentIndex() == 0)
+        if by_amount:
+            amount = self._frac_amount.value()
+            qty    = amount / price
+            self._frac_preview.setText(
+                f"${amount:,.2f}  →  {qty:.4f} 주  @  ${price:,.2f}")
+        else:
+            qty    = self._frac_qty.value()
+            amount = qty * price
+            self._frac_preview.setText(
+                f"{qty:.4f} 주  →  ${amount:,.2f}  @  ${price:,.2f}")
 
     @staticmethod
     def _hline() -> QFrame:
@@ -514,6 +650,7 @@ class OrderPanel(BasePanel):
         self._price_lbl.setText(f"현재가: ${price:,.2f}")
         if self._price_spin.value() == 0.0:
             self._price_spin.setValue(price)
+        self._update_frac_preview()   # 소수점 미리보기 갱신
 
     @pyqtSlot(object)
     def _on_position(self, data: dict) -> None:
@@ -596,6 +733,52 @@ class OrderPanel(BasePanel):
         self._show_status(
             f"✅ {side_kr} {symbol} {qty}주 @ "
             f"{'시장가' if is_market else f'${price:.2f}'}")
+
+    def _place_fractional(self, side: str) -> None:
+        """소수점 주문 발송"""
+        symbol = self._sym_combo.currentText().strip().upper()
+        if not symbol:
+            self._show_status("❌ 종목을 입력하세요", error=True)
+            return
+
+        price = self._frac_price.value()
+        is_market = (price <= 0)
+        if is_market:
+            price = 0.0
+            order_type = "MKT"
+        else:
+            order_type = "LMT"
+
+        ref_price = price if not is_market else self._last_price
+        if ref_price <= 0:
+            self._show_status("❌ 현재가 없음 — 가격을 입력하세요", error=True)
+            return
+
+        by_amount = (self._frac_mode.currentIndex() == 0)
+        if by_amount:
+            qty = round(self._frac_amount.value() / ref_price, 6)
+        else:
+            qty = round(self._frac_qty.value(), 6)
+
+        if qty <= 0:
+            self._show_status("❌ 수량이 0입니다", error=True)
+            return
+
+        cmd = {
+            "action":     "place_order",
+            "symbol":     symbol,
+            "side":       side,
+            "qty":        qty,          # float — 소수점 지원
+            "price":      price,
+            "order_type": order_type,
+            "fractional": True,
+        }
+        self._cmd_queue.put(cmd)
+        side_kr = "매수" if side == "BUY" else "매도"
+        self._show_status(
+            f"✅ 소수점 {side_kr} {symbol} {qty}주 @ "
+            f"{'시장가' if is_market else f'${price:.2f}'}")
+        log.info("Fractional order: %s", cmd)
 
     def _cancel_all(self) -> None:
         self._cmd_queue.put({"action": "cancel_all"})
