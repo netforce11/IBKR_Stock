@@ -372,22 +372,22 @@ class OrderbookPanel(BasePanel):
         self._lbl_spread = _value(color=LABEL_DIM)
         g.addWidget(self._lbl_spread, 7, 1)
 
-        g.addWidget(self._hline("#CED4DA"), 7, 0, 1, 2)
+        g.addWidget(self._hline("#334155"), 8, 0, 1, 2)   # row 8 구분선
 
         # ── 지표값 ───────────────────────────────────────
-        g.addWidget(_label("SMA20"), 8, 0)
+        g.addWidget(_label("SMA20"), 9, 0)
         self._lbl_sma = _value(color=LABEL_DIM)
-        g.addWidget(self._lbl_sma, 8, 1)
+        g.addWidget(self._lbl_sma, 9, 1)
 
-        g.addWidget(_label("EMA9"), 9, 0)
+        g.addWidget(_label("EMA9"), 10, 0)
         self._lbl_ema = _value(color=LABEL_DIM)
-        g.addWidget(self._lbl_ema, 9, 1)
+        g.addWidget(self._lbl_ema, 10, 1)
 
-        g.addWidget(_label("RSI14"), 10, 0)
+        g.addWidget(_label("RSI14"), 11, 0)
         self._lbl_rsi = _value(color=LABEL_DIM)
-        g.addWidget(self._lbl_rsi, 10, 1)
+        g.addWidget(self._lbl_rsi, 11, 1)
 
-        g.addWidget(self._hline("#CED4DA"), 11, 0, 1, 2)
+        g.addWidget(self._hline("#334155"), 12, 0, 1, 2)   # row 12 구분선
 
         # ── 일목균형표 버튼 ──────────────────────────────
         ichi_btn = QPushButton("📊  일목균형표")
@@ -398,9 +398,9 @@ class OrderbookPanel(BasePanel):
             "QPushButton:hover { background:#1E40AF; color:#BFDBFE; }"
             "QPushButton:pressed { background:#1D4ED8; }")
         ichi_btn.clicked.connect(self._open_ichimoku)
-        g.addWidget(ichi_btn, 12, 0, 1, 2)
+        g.addWidget(ichi_btn, 13, 0, 1, 2)
 
-        g.setRowStretch(13, 1)
+        g.setRowStretch(14, 1)
         return w
 
     @staticmethod

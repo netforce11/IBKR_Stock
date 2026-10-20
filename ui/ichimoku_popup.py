@@ -1,5 +1,5 @@
 # ui/ichimoku_popup.py
-# 일목균형표 팝업 차트 — 일봉 기준
+# 일목균형표 팝업 차트 — 일봉 기준 (matplotlib embed)
 #
 # 5선 구성:
 #   전환선  (Tenkan)  빨강    9일 중심
@@ -8,12 +8,11 @@
 #   선행스팬B (SpanB)  주황   구름 아래쪽 경계
 #   후행스팬 (Chikou)  보라   현재가 26봉 뒤
 #
-# 구름(구모): SpanA > SpanB → 녹색 구름 (상승)
-#             SpanA < SpanB → 적색 구름 (하락)
+# 구름(구모): SpanA > SpanB → 녹색 구름
+#             SpanA < SpanB → 적색 구름
 
 from __future__ import annotations
 import random
-import math
 import logging
 from datetime import date, timedelta
 
@@ -21,32 +20,27 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QWidget,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui  import QFont
 
 log = logging.getLogger(__name__)
 
 # ── 색상 ─────────────────────────────────────────────────
 _BG       = "#0F172A"
-_TENKAN   = "#F87171"   # 빨강 — 전환선
-_KIJUN    = "#60A5FA"   # 파랑 — 기준선
-_SPANA    = "#34D399"   # 녹색 — 선행스팬A
-_SPANB    = "#FB923C"   # 주황 — 선행스팬B
-_CHIKOU   = "#C084FC"   # 보라 — 후행스팬
-_UP_CLOUD = "#1A3A2A"   # 상승 구름 배경
-_DN_CLOUD = "#3A1A1A"   # 하락 구름 배경
-_UP_CANDLE = "#26A69A"
-_DN_CANDLE = "#EF5350"
-_GRID      = "#1E293B"
-_TEXT      = "#94A3B8"
+_BG_FLOAT = (0.059, 0.090, 0.165)   # matplotlib용 (0~1)
+_GRID     = (0.118, 0.161, 0.239)
+_TENKAN   = "#F87171"
+_KIJUN    = "#60A5FA"
+_SPANA    = "#34D399"
+_SPANB    = "#FB923C"
+_CHIKOU   = "#C084FC"
+_UP_C     = "#26A69A"
+_DN_C     = "#EF5350"
 
 
-def _gen_mock_bars(symbol: str, n: int = 120,
+def _gen_mock_bars(symbol: str, n: int = 150,
                    seed_price: float = 200.0) -> list[tuple]:
-    """
-    가짜 일봉 OHLC 생성.
-    반환: [(date_str, open, high, low, close), ...]
-    """
+    """가짜 일봉 OHLC 생성. 반환: [(date_str, open, high, low, close), ...]"""
     random.seed(hash(symbol) % 9999)
     price = seed_price
     bars  = []
@@ -70,7 +64,7 @@ def _calc_ichimoku(bars: list[tuple]) -> dict:
     """bars = [(date, o, h, l, c)] → 각 선의 시리즈 반환"""
     from shared.calc.indicators import Ichimoku
 
-    n = len(bars)
+    n      = len(bars)
     tenkan = [None] * n
     kijun  = [None] * n
     spanA  = [None] * n
@@ -83,25 +77,20 @@ def _calc_ichimoku(bars: list[tuple]) -> dict:
         if r:
             tenkan[i] = r["tenkan"]
             kijun[i]  = r["kijun"]
-            # 선행스팬은 26봉 앞에 배치 — 인덱스 범위 안에서만
             fi = i + 26
             if fi < n:
                 spanA[fi] = r["spanA"]
                 spanB[fi] = r["spanB"]
-        # 후행스팬: 현재 종가를 26봉 뒤에
         bi = i - 26
         if bi >= 0:
             chikou[bi] = c
 
-    return {
-        "tenkan": tenkan, "kijun":  kijun,
-        "spanA":  spanA,  "spanB":  spanB,
-        "chikou": chikou,
-    }
+    return {"tenkan": tenkan, "kijun": kijun,
+            "spanA": spanA,  "spanB": spanB, "chikou": chikou}
 
 
 class IchimokuPopup(QDialog):
-    """일목균형표 팝업 다이얼로그 (pyqtgraph 기반)"""
+    """일목균형표 팝업 다이얼로그 (matplotlib embed)"""
 
     PERIODS = {"3개월 (60일)": 60, "6개월 (120일)": 120, "1년 (250일)": 250}
 
@@ -110,9 +99,10 @@ class IchimokuPopup(QDialog):
         self._symbol = symbol.upper()
         self._price  = current_price
         self.setWindowTitle(f"일목균형표 — {self._symbol}")
-        self.setMinimumSize(900, 580)
+        self.setMinimumSize(920, 600)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setStyleSheet(f"background:{_BG}; color:#F1F5F9;")
+        self._canvas = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -128,23 +118,21 @@ class IchimokuPopup(QDialog):
         bar.addWidget(title)
         bar.addStretch()
 
-        # 기간 선택
         period_lbl = QLabel("기간:")
         period_lbl.setStyleSheet("color:#94A3B8; font-size:12px;")
         bar.addWidget(period_lbl)
 
         self._period_cb = QComboBox()
         self._period_cb.addItems(list(self.PERIODS.keys()))
-        self._period_cb.setCurrentIndex(1)   # 기본: 6개월
+        self._period_cb.setCurrentIndex(1)
         self._period_cb.setStyleSheet(
             "QComboBox { background:#1E293B; color:#F1F5F9; border:1px solid #334155;"
-            " border-radius:3px; padding:3px 8px; font-size:12px; min-width:120px; }"
+            " border-radius:3px; padding:3px 8px; font-size:12px; min-width:130px; }"
             "QComboBox::drop-down { border:none; }"
             "QComboBox QAbstractItemView { background:#1E293B; color:#F1F5F9; }")
         self._period_cb.currentIndexChanged.connect(self._refresh)
         bar.addWidget(self._period_cb)
 
-        # 닫기 버튼
         close_btn = QPushButton("✕ 닫기")
         close_btn.setStyleSheet(
             "QPushButton { background:#334155; color:#F1F5F9; border:none;"
@@ -152,146 +140,142 @@ class IchimokuPopup(QDialog):
             "QPushButton:hover { background:#475569; }")
         close_btn.clicked.connect(self.close)
         bar.addWidget(close_btn)
-
         lay.addLayout(bar)
 
         # ── 범례 ─────────────────────────────────────────
         legend = QHBoxLayout()
-        legend.setSpacing(16)
+        legend.setSpacing(20)
         for label, color in [
             ("전환선 (9)", _TENKAN), ("기준선 (26)", _KIJUN),
             ("선행A", _SPANA), ("선행B", _SPANB), ("후행스팬", _CHIKOU),
         ]:
             lbl = QLabel(f"━  {label}")
-            lbl.setStyleSheet(
-                f"color:{color}; font-size:11px; font-weight:bold;")
+            lbl.setStyleSheet(f"color:{color}; font-size:11px; font-weight:bold;")
             legend.addWidget(lbl)
         legend.addStretch()
         lay.addLayout(legend)
 
-        # ── 차트 영역 ─────────────────────────────────────
+        # ── 차트 컨테이너 ─────────────────────────────────
         self._chart_container = QWidget()
         self._chart_container.setStyleSheet(f"background:{_BG};")
-        chart_lay = QVBoxLayout(self._chart_container)
-        chart_lay.setContentsMargins(0, 0, 0, 0)
-        self._chart_lay = chart_lay
+        self._chart_lay = QVBoxLayout(self._chart_container)
+        self._chart_lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._chart_container, 1)
 
-        self._gfx = None
         self._refresh()
 
     def _refresh(self) -> None:
-        """기간 선택에 따라 차트 재렌더링"""
         period_key = self._period_cb.currentText()
         n = self.PERIODS[period_key]
 
-        # 기존 차트 제거
-        if self._gfx is not None:
-            self._chart_lay.removeWidget(self._gfx)
-            self._gfx.deleteLater()
-            self._gfx = None
+        # 기존 캔버스 제거
+        if self._canvas is not None:
+            self._chart_lay.removeWidget(self._canvas)
+            self._canvas.deleteLater()
+            self._canvas = None
 
         try:
             self._build_chart(n)
         except Exception as e:
-            log.exception("일목균형표 차트 렌더링 오류")
+            log.exception("일목균형표 차트 렌더링 오류: %s", e)
             err = QLabel(f"차트 오류: {e}")
-            err.setStyleSheet("color:#EF4444; font-size:12px;")
+            err.setStyleSheet("color:#EF4444; font-size:12px; padding:20px;")
             self._chart_lay.addWidget(err)
 
     def _build_chart(self, n: int) -> None:
-        import pyqtgraph as pg
-        from pyqtgraph import PlotWidget, FillBetweenItem
+        import matplotlib
+        matplotlib.use("QtAgg")
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        import numpy as np
 
-        pg.setConfigOptions(antialias=True, useOpenGL=False)
-
-        bars = _gen_mock_bars(self._symbol, n=n + 30, seed_price=self._price)
-        bars = bars[-n:]   # 최근 n봉
+        bars = _gen_mock_bars(self._symbol, n=n + 60, seed_price=self._price)
+        bars = bars[-n:]
         ichi = _calc_ichimoku(bars)
         xs   = list(range(len(bars)))
 
-        # ── GraphicsLayoutWidget ──────────────────────────
-        gfx = pg.GraphicsLayoutWidget()
-        gfx.setBackground(_BG)
-        self._gfx = gfx
-        self._chart_lay.addWidget(gfx)
+        fig, (ax_main, ax_candle) = plt.subplots(
+            2, 1, figsize=(12, 7), gridspec_kw={"height_ratios": [3, 1]},
+            facecolor=_BG_FLOAT)
+        fig.subplots_adjust(hspace=0.05, left=0.06, right=0.98,
+                            top=0.97, bottom=0.08)
 
-        # ── 캔들 + 일목선 플롯 ───────────────────────────
-        p = gfx.addPlot(row=0, col=0)
-        p.setMenuEnabled(False)
-        p.showGrid(x=True, y=True, alpha=0.15)
-        p.getAxis("bottom").setStyle(tickFont=QFont("monospace", 8))
-        p.getAxis("left").setStyle(tickFont=QFont("monospace", 9))
-        for ax in ("top", "right"):
-            p.showAxis(ax, False)
+        # ── 공통 스타일 적용 ──────────────────────────────
+        for ax in (ax_main, ax_candle):
+            ax.set_facecolor(_BG_FLOAT)
+            ax.tick_params(colors="#64748B", labelsize=8)
+            ax.spines[:].set_color(_GRID)
+            for spine in ax.spines.values():
+                spine.set_color((0.118, 0.161, 0.239))
+            ax.grid(True, color=_GRID, alpha=0.4, linewidth=0.5)
+            ax.yaxis.tick_right()
 
-        # x축 날짜 레이블
-        date_labels = {i: bars[i][0] for i in range(0, len(bars), max(1, len(bars)//10))}
-        p.getAxis("bottom").setTicks([list(date_labels.items())])
-
-        # 캔들스틱 — pyqtgraph CandleStickItem (간단 버전)
+        # ── 캔들스틱 (ax_candle) ─────────────────────────
         for i, (_, o, h, l, c) in enumerate(bars):
-            color = _UP_CANDLE if c >= o else _DN_CANDLE
-            pen   = pg.mkPen(color, width=1)
-            # 몸통
-            body_h = abs(c - o) or 0.01
-            rect = pg.QtWidgets.QGraphicsRectItem(i - 0.3, min(o, c), 0.6, body_h)
-            rect.setPen(pg.mkPen(color, width=0.5))
-            rect.setBrush(pg.mkBrush(color))
-            p.addItem(rect)
+            color = _UP_C if c >= o else _DN_C
             # 꼬리
-            p.plot([i, i], [l, min(o, c)], pen=pen)
-            p.plot([i, i], [max(o, c), h], pen=pen)
+            ax_candle.plot([i, i], [l, h], color=color, linewidth=0.8)
+            # 몸통
+            body_bot = min(o, c)
+            body_h   = max(abs(c - o), 0.01)
+            rect = mpatches.Rectangle(
+                (i - 0.3, body_bot), 0.6, body_h,
+                facecolor=color, edgecolor=color, linewidth=0)
+            ax_candle.add_patch(rect)
+        ax_candle.set_xlim(-1, len(bars))
+        ax_candle.set_ylabel("가격", color="#64748B", fontsize=8)
 
-        # ── 구름 채우기 (FillBetweenItem) ────────────────
-        sa_xs, sa_ys, sb_ys = [], [], []
-        for i in xs:
-            if ichi["spanA"][i] is not None and ichi["spanB"][i] is not None:
-                sa_xs.append(i)
-                sa_ys.append(ichi["spanA"][i])
-                sb_ys.append(ichi["spanB"][i])
-
-        if sa_xs:
-            # 상승/하락 구간별로 색 분리
-            import numpy as np
-            sa_arr = np.array(sa_ys)
-            sb_arr = np.array(sb_ys)
-            x_arr  = np.array(sa_xs, dtype=float)
-
-            curve_a = p.plot(x_arr, sa_arr,
-                             pen=pg.mkPen(_SPANA, width=1.5))
-            curve_b = p.plot(x_arr, sb_arr,
-                             pen=pg.mkPen(_SPANB, width=1.5))
-
-            # 구름 채우기: 상승(A>B)=녹색, 하락(A<B)=적색
-            fill_up = pg.FillBetweenItem(
-                curve_a, curve_b,
-                brush=pg.mkBrush(34, 197, 94, 40))    # 녹색 반투명
-            fill_dn = pg.FillBetweenItem(
-                curve_b, curve_a,
-                brush=pg.mkBrush(239, 68, 68, 40))    # 적색 반투명
-            p.addItem(fill_up)
-            p.addItem(fill_dn)
-
-        # ── 일목 5선 ─────────────────────────────────────
-        def _plot_line(key: str, color: str, width: float = 1.5) -> None:
+        # ── 일목 5선 + 구름 (ax_main) ────────────────────
+        def plot_line(key, color, lw=1.5, label=""):
             pts = [(i, v) for i, v in enumerate(ichi[key]) if v is not None]
             if len(pts) < 2:
                 return
             xi, yi = zip(*pts)
-            p.plot(list(xi), list(yi),
-                   pen=pg.mkPen(color, width=width))
+            ax_main.plot(xi, yi, color=color, linewidth=lw,
+                         label=label, alpha=0.9)
 
-        _plot_line("tenkan", _TENKAN, 1.5)
-        _plot_line("kijun",  _KIJUN,  2.0)
-        _plot_line("chikou", _CHIKOU, 1.2)
+        plot_line("tenkan", _TENKAN, 1.4)
+        plot_line("kijun",  _KIJUN,  1.8)
+        plot_line("chikou", _CHIKOU, 1.2)
+
+        # 구름 채우기
+        sa_xs = [i for i in xs if ichi["spanA"][i] is not None
+                 and ichi["spanB"][i] is not None]
+        if sa_xs:
+            sa_ys = np.array([ichi["spanA"][i] for i in sa_xs])
+            sb_ys = np.array([ichi["spanB"][i] for i in sa_xs])
+            ax_main.plot(sa_xs, sa_ys, color=_SPANA, linewidth=1.4, alpha=0.9)
+            ax_main.plot(sa_xs, sb_ys, color=_SPANB, linewidth=1.4, alpha=0.9)
+            ax_main.fill_between(sa_xs, sa_ys, sb_ys,
+                                 where=(sa_ys >= sb_ys),
+                                 facecolor="#22C55E", alpha=0.15, interpolate=True)
+            ax_main.fill_between(sa_xs, sa_ys, sb_ys,
+                                 where=(sa_ys < sb_ys),
+                                 facecolor="#EF4444", alpha=0.15, interpolate=True)
 
         # 현재가 수평선
-        p.addItem(pg.InfiniteLine(
-            pos=self._price, angle=0,
-            pen=pg.mkPen("#FBBF24", width=1, style=Qt.PenStyle.DashLine),
-            label=f" ${self._price:,.2f}",
-            labelOpts={"color": "#FBBF24", "position": 0.02,
-                       "fill": pg.mkBrush(_BG)}))
+        ax_main.axhline(y=self._price, color="#FBBF24",
+                        linewidth=1.0, linestyle="--", alpha=0.8)
+        ax_main.text(len(bars) * 0.99, self._price,
+                     f" ${self._price:,.2f}",
+                     color="#FBBF24", fontsize=8, va="bottom", ha="right")
 
-        p.setXRange(0, len(bars) - 1, padding=0.02)
+        ax_main.set_xlim(-1, len(bars))
+        ax_main.set_ylabel("가격", color="#64748B", fontsize=8)
+
+        # x축: 날짜 레이블 (10개 표시)
+        step = max(1, len(bars) // 10)
+        tick_xs  = list(range(0, len(bars), step))
+        tick_lbl = [bars[i][0] for i in tick_xs]
+        ax_main.set_xticks([])          # 상단 차트엔 x눈금 숨김
+        ax_candle.set_xticks(tick_xs)
+        ax_candle.set_xticklabels(tick_lbl, rotation=30,
+                                  ha="right", fontsize=7, color="#64748B")
+
+        # ── Canvas 삽입 ───────────────────────────────────
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setStyleSheet(f"background:{_BG};")
+        self._canvas = canvas
+        self._chart_lay.addWidget(canvas)
+        plt.close(fig)
