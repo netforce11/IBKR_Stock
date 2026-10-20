@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem,
     QAbstractItemView, QMenu, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QPoint
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QPoint
 from PyQt6.QtGui import QColor, QFont
 
 from shared.core.bus import DataBus
@@ -118,6 +118,10 @@ class ScannerPanel(BasePanel):
         self._req_id    = 9000      # 스캐너 전용 req_id 시작값
         self._last_result: dict = {}
 
+        # 자동 조회 타이머
+        self._auto_timer = QTimer(self)
+        self._auto_timer.timeout.connect(self._do_scan)
+
         self.setStyleSheet(
             f"background:{_BG}; color:{_TEXT};" + _INPUT_STYLE)
         self._build_ui()
@@ -208,6 +212,37 @@ class ScannerPanel(BasePanel):
         self._auto_save_chk.setStyleSheet("font-size:11px;")
         lay.addWidget(self._auto_save_chk)
 
+        # ── 자동 조회 옵션 ────────────────────────────────────
+        auto_row = QHBoxLayout()
+        self._auto_refresh_chk = QCheckBox("자동 조회")
+        self._auto_refresh_chk.setStyleSheet("font-size:11px;")
+        self._auto_refresh_chk.toggled.connect(self._on_auto_refresh_toggle)
+        auto_row.addWidget(self._auto_refresh_chk)
+
+        self._interval_combo = QComboBox()
+        for lbl, ms in [("10초", 10_000), ("30초", 30_000),
+                         ("1분",  60_000), ("5분",  300_000), ("10분", 600_000)]:
+            self._interval_combo.addItem(lbl, ms)
+        self._interval_combo.setCurrentIndex(1)   # 기본: 30초
+        self._interval_combo.setStyleSheet(
+            "QComboBox { font-size:11px; padding:1px 4px; }")
+        self._interval_combo.currentIndexChanged.connect(
+            self._on_interval_changed)
+        auto_row.addWidget(self._interval_combo)
+
+        # 다음 조회까지 카운트다운
+        self._countdown_lbl = QLabel("")
+        self._countdown_lbl.setStyleSheet("color:#888; font-size:10px;")
+        auto_row.addWidget(self._countdown_lbl)
+        auto_row.addStretch()
+        lay.addLayout(auto_row)
+
+        # 카운트다운 표시용 1초 타이머
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.setInterval(1000)
+        self._countdown_timer.timeout.connect(self._update_countdown)
+        self._countdown_remaining = 0
+
         # ── 조회 버튼 ──────────────────────────────────────────
         self._btn_scan = QPushButton("조회")
         self._btn_scan.setStyleSheet(_BTN_SCAN)
@@ -296,7 +331,8 @@ class ScannerPanel(BasePanel):
         for i, (_, width, _align) in enumerate(_COLS):
             self._table.setColumnWidth(i, width)
 
-        self._table.doubleClicked.connect(self._on_row_double_click)
+        # 단일 클릭 → 호가창/차트 연동 (더블클릭 불필요)
+        self._table.clicked.connect(self._on_row_click)
         self._table.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(
@@ -506,12 +542,12 @@ class ScannerPanel(BasePanel):
             return None
         return sym_item.data(Qt.ItemDataRole.UserRole) or sym_item.text()
 
-    def _on_row_double_click(self, index) -> None:
-        """더블클릭 → WATCHLIST_SELECT 발행 (호가창/차트 연동)"""
+    def _on_row_click(self, index) -> None:
+        """단일 클릭 → WATCHLIST_SELECT 발행 (호가창/차트/기타 패널 전체 연동)"""
         sym = self._get_symbol_at(index.row())
         if sym:
             self._bus.publish(Topics.WATCHLIST_SELECT, {"symbol": sym})
-            self._set_status(f"📌 {sym} → 호가창/차트 전환")
+            self._set_status(f"📌 {sym} → 전 패널 전환")
 
     def _on_context_menu(self, pos: QPoint) -> None:
         row = self._table.rowAt(pos.y())
@@ -539,6 +575,44 @@ class ScannerPanel(BasePanel):
             self._set_status(f"★ {sym} 관심종목 추가 요청")
 
     # ════════════════════════════════════════════════════════
+    # 자동 조회
+    # ════════════════════════════════════════════════════════
+    def _on_auto_refresh_toggle(self, checked: bool) -> None:
+        if checked:
+            ms = self._interval_combo.currentData()
+            self._auto_timer.start(ms)
+            self._countdown_remaining = ms // 1000
+            self._countdown_timer.start()
+            self._update_countdown()
+            self._set_status(
+                f"🔄 자동 조회 시작 ({self._interval_combo.currentText()})")
+        else:
+            self._auto_timer.stop()
+            self._countdown_timer.stop()
+            self._countdown_lbl.setText("")
+            self._set_status("⏹ 자동 조회 중지")
+
+    def _on_interval_changed(self) -> None:
+        """간격 변경 시 타이머 재시작"""
+        if self._auto_refresh_chk.isChecked():
+            ms = self._interval_combo.currentData()
+            self._auto_timer.start(ms)
+            self._countdown_remaining = ms // 1000
+            self._update_countdown()
+
+    def _update_countdown(self) -> None:
+        """1초마다 카운트다운 갱신"""
+        if not self._auto_refresh_chk.isChecked():
+            return
+        if self._countdown_remaining > 0:
+            self._countdown_lbl.setText(f"{self._countdown_remaining}s")
+            self._countdown_remaining -= 1
+        else:
+            # 조회 발동 시 카운트 리셋
+            ms = self._interval_combo.currentData()
+            self._countdown_remaining = ms // 1000
+
+    # ════════════════════════════════════════════════════════
     # 단축키
     # ════════════════════════════════════════════════════════
     def register_shortcuts(self) -> list:
@@ -554,4 +628,6 @@ class ScannerPanel(BasePanel):
         self._status_lbl.setText(msg)
 
     def closeEvent(self, event) -> None:
+        self._auto_timer.stop()
+        self._countdown_timer.stop()
         super().closeEvent(event)
