@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 # ── 저장 경로 ─────────────────────────────────────────────────
 _JOURNAL_PATH = (Path.home() / "trading_terminal" / "ibkr_stock"
                  / "data" / "market_journal.json")
+_JOURNAL_ACTUAL_PATH = (Path.home() / "trading_terminal" / "ibkr_stock"
+                        / "data" / "market_journal_actual.json")
 _TRADIER_CAL  = (Path.home() / "trading_terminal" / "Tradier_Working"
                  / "data" / "calendar_memos.json")
 
@@ -310,14 +312,17 @@ class MarketJournalPanel(BasePanel):
     DEFAULT_SIZE = (1200, 680)
 
     def __init__(self, bus: DataBus, parent=None) -> None:
-        self._journal:      dict       = {}
-        self._cal_data:     dict       = {}
-        self._view_weeks:   int        = 1
-        self._sel_date:     date|None  = None
-        self._fetch_thread             = None
-        self._mnq_price:    float      = 0.0
+        self._journal:        dict       = {}
+        self._journal_actual: dict       = {}
+        self._active_tab:     int        = 0   # 0=계획, 1=실제결과
+        self._cal_data:       dict       = {}
+        self._view_weeks:     int        = 1
+        self._sel_date:       date|None  = None
+        self._fetch_thread               = None
+        self._mnq_price:      float      = 0.0
         super().__init__(bus, parent)
         self._load_journal()
+        self._load_journal_actual()
         self._load_tradier_cal()
         # 초기 뷰: 1주 기준 (이번 주)
         self._view_start = self._view_start_for(self._view_weeks)
@@ -394,30 +399,22 @@ class MarketJournalPanel(BasePanel):
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setHandleWidth(4)
 
-        # 테이블
-        self._table = QTableWidget()
-        self._table.setColumnCount(len(_COLS))
-        self._table.setHorizontalHeaderLabels([c[0] for c in _COLS])
-        self._table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._table.horizontalHeader().setStyleSheet(
-            f"QHeaderView::section {{ background:{_BG_HEADER}; color:{_TEXT};"
-            f" border:1px solid {_BORDER}; font-size:11px; padding:4px; }}")
-        self._table.verticalHeader().setVisible(False)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setAlternatingRowColors(False)
-        self._table.setShowGrid(True)
-        self._table.setGridStyle(Qt.PenStyle.SolidLine)
-        self._table.setStyleSheet(
-            f"QTableWidget {{ background:{_BG_ROW}; color:{_TEXT};"
-            f" border:1px solid {_BORDER}; font-size:11px; gridline-color:{_BORDER}; }}"
-            f"QTableWidget::item:selected {{ background:{_SEL_BG}; color:{_TEXT}; }}")
-        for i, (_, w) in enumerate(_COLS):
-            self._table.setColumnWidth(i, w)
-        self._table.horizontalHeader().setSectionResizeMode(
-            12, QHeaderView.ResizeMode.Stretch)  # 메모 컬럼 (col 12)
-        self._table.cellClicked.connect(self._on_row_clicked)
-        splitter.addWidget(self._table)
+        # 탭 위젯 (계획 / 실제 결과)
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setStyleSheet(
+            "QTabWidget::pane { border:1px solid #D0D7DE; margin-top:-1px; }"
+            "QTabBar::tab { padding:5px 18px; font-size:12px; font-weight:bold;"
+            "  border:1px solid #D0D7DE; border-bottom:none; border-radius:4px 4px 0 0; }"
+            "QTabBar::tab:selected { background:#1565C0; color:#fff; }"
+            "QTabBar::tab:!selected { background:#E8ECF0; color:#555E6B; }"
+            "QTabBar::tab:hover:!selected { background:#D0D8E4; }")
+
+        self._table        = self._build_table()
+        self._table_actual = self._build_table()
+        self._tab_widget.addTab(self._table,        "📋 시장 추적 일지")
+        self._tab_widget.addTab(self._table_actual, "✅ 실제 결과")
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        splitter.addWidget(self._tab_widget)
 
         splitter.addWidget(self._build_edit_form())
         splitter.setSizes([340, 360])
@@ -630,6 +627,52 @@ class MarketJournalPanel(BasePanel):
 
         return root_w
 
+    # ── 테이블 빌더 (두 탭 공용) ─────────────────────────────
+    def _build_table(self) -> QTableWidget:
+        t = QTableWidget()
+        t.setColumnCount(len(_COLS))
+        t.setHorizontalHeaderLabels([c[0] for c in _COLS])
+        t.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        t.horizontalHeader().setStyleSheet(
+            f"QHeaderView::section {{ background:{_BG_HEADER}; color:{_TEXT};"
+            f" border:1px solid {_BORDER}; font-size:11px; padding:4px; }}")
+        t.verticalHeader().setVisible(False)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setAlternatingRowColors(False)
+        t.setShowGrid(True)
+        t.setGridStyle(Qt.PenStyle.SolidLine)
+        t.setStyleSheet(
+            f"QTableWidget {{ background:{_BG_ROW}; color:{_TEXT};"
+            f" border:1px solid {_BORDER}; font-size:11px; gridline-color:{_BORDER}; }}"
+            f"QTableWidget::item:selected {{ background:{_SEL_BG}; color:{_TEXT}; }}")
+        for i, (_, w) in enumerate(_COLS):
+            t.setColumnWidth(i, w)
+        t.horizontalHeader().setSectionResizeMode(
+            12, QHeaderView.ResizeMode.Stretch)
+        t.cellClicked.connect(self._on_row_clicked)
+        return t
+
+    # ── 탭 전환 ──────────────────────────────────────────────
+    def _on_tab_changed(self, idx: int) -> None:
+        self._active_tab = idx
+        self._refresh_table()
+        if self._sel_date:
+            self._select_date(self._sel_date)
+
+    # ── active 접근자 ─────────────────────────────────────────
+    @property
+    def _active_journal(self) -> dict:
+        return self._journal_actual if self._active_tab == 1 else self._journal
+
+    @property
+    def _active_table(self) -> QTableWidget:
+        return self._table_actual if self._active_tab == 1 else self._table
+
+    @property
+    def _active_journal_path(self) -> Path:
+        return _JOURNAL_ACTUAL_PATH if self._active_tab == 1 else _JOURNAL_PATH
+
     # ── UI 헬퍼 ──────────────────────────────────────────────
     def _lbl(self, text: str) -> QLabel:
         l = QLabel(text); l.setStyleSheet(_LBL); return l
@@ -841,6 +884,29 @@ class MarketJournalPanel(BasePanel):
         except Exception as e:
             log.error("[Journal] 저장 실패: %s", e)
 
+    def _load_journal_actual(self) -> None:
+        try:
+            if _JOURNAL_ACTUAL_PATH.exists():
+                self._journal_actual = json.loads(
+                    _JOURNAL_ACTUAL_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning("[Journal] 실제결과 로드 실패: %s", e)
+
+    def _save_journal_actual(self) -> None:
+        try:
+            _JOURNAL_ACTUAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _JOURNAL_ACTUAL_PATH.write_text(
+                json.dumps(self._journal_actual, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception as e:
+            log.error("[Journal] 실제결과 저장 실패: %s", e)
+
+    def _save_active_journal(self) -> None:
+        if self._active_tab == 1:
+            self._save_journal_actual()
+        else:
+            self._save_journal()
+
     def _load_tradier_cal(self) -> None:
         try:
             if _TRADIER_CAL.exists():
@@ -884,12 +950,12 @@ class MarketJournalPanel(BasePanel):
     def _refresh_table(self) -> None:
         days  = _trading_days(self._view_start, 5 * self._view_weeks)
         today = date.today()
-        self._table.setRowCount(len(days))
+        self._active_table.setRowCount(len(days))
         self._row_dates = days
 
         for r, d in enumerate(days):
             key      = d.isoformat()
-            entry    = self._journal.get(key, {})
+            entry    = self._active_journal.get(key, {})
             is_today = (d == today)
             exps     = self._entry_exp(entry)
 
@@ -941,9 +1007,9 @@ class MarketJournalPanel(BasePanel):
 
                 if is_today and c == 0:
                     f = item.font(); f.setBold(True); item.setFont(f)
-                self._table.setItem(r, c, item)
+                self._active_table.setItem(r, c, item)
 
-            self._table.setRowHeight(r, 26)
+            self._active_table.setRowHeight(r, 26)
 
     # ══════════════════════════════════════════════════════════
     # 행 선택 / 편집 폼 채우기
@@ -955,7 +1021,7 @@ class MarketJournalPanel(BasePanel):
     def _select_date(self, d: date) -> None:
         self._sel_date = d
         key   = d.isoformat()
-        entry = self._journal.get(key, {})
+        entry = self._active_journal.get(key, {})
         # 삭제 버튼: 해당 날짜 데이터가 있을 때만 활성화
         has_data = bool(entry)
         self._btn_delete.setEnabled(has_data)
@@ -1016,7 +1082,7 @@ class MarketJournalPanel(BasePanel):
         if hasattr(self, "_row_dates"):
             for r, rd in enumerate(self._row_dates):
                 if rd == d:
-                    self._table.selectRow(r); break
+                    self._active_table.selectRow(r); break
 
     @pyqtSlot()
     def _on_save(self) -> None:
@@ -1049,36 +1115,35 @@ class MarketJournalPanel(BasePanel):
             "rate_pivot": self._f_rate_pivot.text().strip(),
             "memo":       self._f_memo.text().strip(),
         }
-        self._journal[self._sel_date.isoformat()] = entry
+        self._active_journal[self._sel_date.isoformat()] = entry
 
-        # D+N 옵션 분기 자동 기록 — 체크박스 태그도 함께 전달
-        for n_str in re.findall(r"[Dd]\+(\d+)", entry["option"]):
-            n = int(n_str)
-            if 1 <= n <= 30:
-                target   = _nth_trading_day(self._sel_date, n)
-                t_key    = target.isoformat()
-                t_entry  = self._journal.get(t_key, {})
-                existing = t_entry.get("option", "")
-                # 체크박스 태그 조합 (선택된 것만)
-                tags = " / ".join(filter(None, [
-                    "옵션 분기 타진",
-                    "옵션 분기 추정"        if entry.get("opt_est")   else "",
-                    "감마 폭발 가능성"      if entry.get("opt_gamma") else "",
-                    "옵션 추세 폭발 가능성" if entry.get("opt_trend") else "",
-                ]))
-                if "옵션 분기 타진" not in existing:
-                    t_entry["option"] = (
-                        (existing + " / " + tags).strip(" /")
-                        if existing else tags)
-                    # 체크박스 상태도 대상 날짜에 복사
-                    t_entry["opt_est"]   = entry.get("opt_est",   False)
-                    t_entry["opt_gamma"] = entry.get("opt_gamma", False)
-                    t_entry["opt_trend"] = entry.get("opt_trend", False)
-                    self._journal[t_key] = t_entry
-                log.info("[Journal] D+%d → %s 옵션 분기 타진 기록: %s",
-                         n, target.isoformat(), tags)
+        # D+N 옵션 분기 자동 기록 — 계획 탭에서만 적용
+        if self._active_tab == 0:
+            for n_str in re.findall(r"[Dd]\+(\d+)", entry["option"]):
+                n = int(n_str)
+                if 1 <= n <= 30:
+                    target   = _nth_trading_day(self._sel_date, n)
+                    t_key    = target.isoformat()
+                    t_entry  = self._active_journal.get(t_key, {})
+                    existing = t_entry.get("option", "")
+                    tags = " / ".join(filter(None, [
+                        "옵션 분기 타진",
+                        "옵션 분기 추정"        if entry.get("opt_est")   else "",
+                        "감마 폭발 가능성"      if entry.get("opt_gamma") else "",
+                        "옵션 추세 폭발 가능성" if entry.get("opt_trend") else "",
+                    ]))
+                    if "옵션 분기 타진" not in existing:
+                        t_entry["option"] = (
+                            (existing + " / " + tags).strip(" /")
+                            if existing else tags)
+                        t_entry["opt_est"]   = entry.get("opt_est",   False)
+                        t_entry["opt_gamma"] = entry.get("opt_gamma", False)
+                        t_entry["opt_trend"] = entry.get("opt_trend", False)
+                        self._active_journal[t_key] = t_entry
+                    log.info("[Journal] D+%d → %s 옵션 분기 타진 기록: %s",
+                             n, target.isoformat(), tags)
 
-        self._save_journal()
+        self._save_active_journal()
         self._refresh_table()
         self._select_date(self._sel_date)   # 삭제 버튼 활성화도 여기서 처리
 
@@ -1087,7 +1152,7 @@ class MarketJournalPanel(BasePanel):
         if self._sel_date is None:
             return
         key = self._sel_date.isoformat()
-        if key not in self._journal:
+        if key not in self._active_journal:
             return
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
@@ -1100,8 +1165,8 @@ class MarketJournalPanel(BasePanel):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        del self._journal[key]
-        self._save_journal()
+        del self._active_journal[key]
+        self._save_active_journal()
         log.info("[Journal] %s 데이터 삭제", key)
         self._refresh_table()
         self._select_date(self._sel_date)   # 폼 초기화 + 삭제버튼 비활성
