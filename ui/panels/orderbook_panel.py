@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem,
     QLabel, QWidget, QHBoxLayout, QVBoxLayout,
     QHeaderView, QFrame, QSplitter, QSizePolicy,
-    QGridLayout,
+    QGridLayout, QPushButton,
 )
 from PyQt6.QtCore import pyqtSlot, Qt
 from PyQt6.QtGui import QColor, QFont
@@ -166,6 +166,11 @@ class OrderbookPanel(BasePanel):
                       lambda d: self._invoke_main("_on_price", d))
         bus.subscribe(Topics.WATCHLIST_SELECT, self,
                       lambda d: self._invoke_main("_on_watchlist_select", d))
+
+        # 지표값 구독 (CalcProcess 발행)
+        for ind in ("sma20", "ema9", "rsi14"):
+            bus.subscribe(Topics.indicator(self._symbol, ind), self,
+                          lambda d, i=ind: self._invoke_main("_on_indicator", (i, d)))
 
     # ── UI 구성 ──────────────────────────────────────────
     def _build_ui(self) -> None:
@@ -367,7 +372,35 @@ class OrderbookPanel(BasePanel):
         self._lbl_spread = _value(color=LABEL_DIM)
         g.addWidget(self._lbl_spread, 7, 1)
 
-        g.setRowStretch(8, 1)  # 하단 여백
+        g.addWidget(self._hline("#CED4DA"), 7, 0, 1, 2)
+
+        # ── 지표값 ───────────────────────────────────────
+        g.addWidget(_label("SMA20"), 8, 0)
+        self._lbl_sma = _value(color=LABEL_DIM)
+        g.addWidget(self._lbl_sma, 8, 1)
+
+        g.addWidget(_label("EMA9"), 9, 0)
+        self._lbl_ema = _value(color=LABEL_DIM)
+        g.addWidget(self._lbl_ema, 9, 1)
+
+        g.addWidget(_label("RSI14"), 10, 0)
+        self._lbl_rsi = _value(color=LABEL_DIM)
+        g.addWidget(self._lbl_rsi, 10, 1)
+
+        g.addWidget(self._hline("#CED4DA"), 11, 0, 1, 2)
+
+        # ── 일목균형표 버튼 ──────────────────────────────
+        ichi_btn = QPushButton("📊  일목균형표")
+        ichi_btn.setStyleSheet(
+            "QPushButton { background:#1E3A5F; color:#93C5FD;"
+            " border:1px solid #3B82F6; border-radius:4px;"
+            " padding:5px 8px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#1E40AF; color:#BFDBFE; }"
+            "QPushButton:pressed { background:#1D4ED8; }")
+        ichi_btn.clicked.connect(self._open_ichimoku)
+        g.addWidget(ichi_btn, 12, 0, 1, 2)
+
+        g.setRowStretch(13, 1)
         return w
 
     @staticmethod
@@ -505,6 +538,42 @@ class OrderbookPanel(BasePanel):
         if self._fill_table.rowCount() > 200:
             self._fill_table.removeRow(200)
 
+    @pyqtSlot(object)
+    def _on_indicator(self, payload) -> None:
+        name, data = payload
+        val = data.get("value")
+        if val is None:
+            return
+        if name == "sma20":
+            self._lbl_sma.setText(f"{val:,.2f}")
+            self._lbl_sma.setStyleSheet(f"color: {LABEL_DIM}; font-size:14px;")
+        elif name == "ema9":
+            self._lbl_ema.setText(f"{val:,.2f}")
+            self._lbl_ema.setStyleSheet(f"color: {LABEL_DIM}; font-size:14px;")
+        elif name == "rsi14":
+            # RSI 색상: 30 이하=과매도(파랑), 70 이상=과매수(빨강), 그 외=회색
+            if val <= 30:
+                color = BID_TEXT
+            elif val >= 70:
+                color = ASK_TEXT
+            else:
+                color = LABEL_DIM
+            self._lbl_rsi.setText(f"{val:.1f}")
+            self._lbl_rsi.setStyleSheet(f"color: {color}; font-size:14px; font-weight:bold;")
+
+    def _open_ichimoku(self) -> None:
+        """일목균형표 팝업 열기"""
+        from ui.ichimoku_popup import IchimokuPopup
+        price = 200.0
+        try:
+            txt = self._lbl_price.text().replace("$", "").replace(",", "")
+            if txt and txt != "--":
+                price = float(txt)
+        except ValueError:
+            pass
+        popup = IchimokuPopup(self._symbol, current_price=price, parent=self)
+        popup.show()
+
     # ── 관심종목 선택 → 종목 전환 ────────────────────────
     @pyqtSlot(object)
     def _on_watchlist_select(self, data: dict) -> None:
@@ -518,15 +587,23 @@ class OrderbookPanel(BasePanel):
             return
         self._bus.unsubscribe(Topics.stock_orderbook(self._symbol), self)
         self._bus.unsubscribe(Topics.stock_price(self._symbol), self)
+        for ind in ("sma20", "ema9", "rsi14"):
+            self._bus.unsubscribe(Topics.indicator(self._symbol, ind), self)
         self._symbol = new_sym
         self._clear_book()
         self._fill_table.setRowCount(0)
         self._lbl_sym.setText(new_sym)
         self.setWindowTitle(f"호가창 — {new_sym}")
+        # 지표값 초기화
+        for lbl in (self._lbl_sma, self._lbl_ema, self._lbl_rsi):
+            lbl.setText("--")
         self._bus.subscribe(Topics.stock_orderbook(new_sym), self,
                             lambda d: self._invoke_main("_on_book", d))
         self._bus.subscribe(Topics.stock_price(new_sym), self,
                             lambda d: self._invoke_main("_on_price", d))
+        for ind in ("sma20", "ema9", "rsi14"):
+            self._bus.subscribe(Topics.indicator(new_sym, ind), self,
+                                lambda d, i=ind: self._invoke_main("_on_indicator", (i, d)))
 
     def _clear_book(self) -> None:
         for r in range(_ROWS):
