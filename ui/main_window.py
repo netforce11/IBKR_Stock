@@ -130,6 +130,7 @@ class MainWindow(QMainWindow):
 
         # 가상화면 슬롯 상태 (0 = 없음)
         self._cur_slot: int = 0
+        self._switching_slot: bool = False   # 중복 전환 방지
         self._fav_actions: list[tuple] = []   # (QAction, pid)
 
         self._build_menu()
@@ -532,23 +533,32 @@ class MainWindow(QMainWindow):
         # 부팅 미완료 시 무시 (Step4 이전에 버튼 클릭 방어)
         if not hasattr(self, "_layout_mgr"):
             return
-        # 현재 슬롯 저장
-        if self._cur_slot > 0:
-            self._layout_mgr.save(_slot_file(self._cur_slot))
-        self._layout_mgr.save()   # 기본 파일도 동기화
+        # 중복 전환 방지 (연속 시그널로 인한 segfault 방지)
+        if self._switching_slot:
+            return
+        if slot == self._cur_slot:
+            return
+        self._switching_slot = True
+        try:
+            # 현재 슬롯 저장
+            if self._cur_slot > 0:
+                self._layout_mgr.save(_slot_file(self._cur_slot))
+            self._layout_mgr.save()   # 기본 파일도 동기화
 
-        self._cur_slot = slot
-        for i, btn in enumerate(self._slot_btns, 1):
-            btn.setChecked(i == slot)
+            self._cur_slot = slot
+            for i, btn in enumerate(self._slot_btns, 1):
+                btn.setChecked(i == slot)
 
-        sf = _slot_file(slot)
-        if sf.exists():
-            self._layout_mgr.restore(sf)
-            self._status_bar.showMessage(f"화면 {slot} 복원", 2000)
-        else:
-            # 새 슬롯: 모든 패널 숨김 → 사용자가 직접 배치
-            self._layout_mgr.hide_all()
-            self._status_bar.showMessage(f"화면 {slot} — 빈 화면 (패널찾기로 추가)", 2000)
+            sf = _slot_file(slot)
+            if sf.exists():
+                self._layout_mgr.restore(sf)
+                self._status_bar.showMessage(f"화면 {slot} 복원", 2000)
+            else:
+                # 새 슬롯: 모든 패널 숨김 → 사용자가 직접 배치
+                self._layout_mgr.hide_all()
+                self._status_bar.showMessage(f"화면 {slot} — 빈 화면 (패널찾기로 추가)", 2000)
+        finally:
+            self._switching_slot = False
 
     # ════════════════════════════════════════════════════
     # 패널 찾기 다이얼로그
