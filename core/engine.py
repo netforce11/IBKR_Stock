@@ -75,9 +75,10 @@ class TradingEngine:
         req = OrderRequest(
             symbol=cmd["symbol"],
             side=cmd["side"],
-            quantity=cmd["quantity"],
+            quantity=cmd.get("quantity") or cmd.get("qty"),
             price=cmd.get("price"),
             order_type=cmd.get("order_type", "MKT"),
+            fractional=cmd.get("fractional", False),
         )
         v = self._validator.validate(req)
         if not v.ok:

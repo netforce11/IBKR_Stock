@@ -65,9 +65,10 @@ def _make_stk_contract(symbol: str, exchange: str = "SMART",
     return c
 
 
-def _make_ibkr_order(action: str, qty: int,
-                     order_type: str, price: float) -> Any:
-    """IBKR 주문 객체 생성"""
+def _make_ibkr_order(action: str, qty: float,
+                     order_type: str, price: float,
+                     fractional: bool = False) -> Any:
+    """IBKR 주문 객체 생성 (소수 주문 지원)"""
     if not IBAPI_OK:
         return None
     o = IBOrder()
@@ -78,6 +79,9 @@ def _make_ibkr_order(action: str, qty: int,
     o.orderType     = order_type.upper()     # "LMT" | "MKT"
     o.tif           = "DAY"
     o.transmit      = True
+    if fractional:
+        # IBKR fractional share: cashQty 또는 totalQuantity 소수 그대로
+        o.totalQuantity = qty   # ibapi 2.x 이상에서 float 허용
     if order_type.upper() in ("LMT", "LIMIT"):
         o.lmtPrice = round(price, 2)
     return o
@@ -360,12 +364,14 @@ class IBKRBroker(BaseBroker):
             qty        = req.quantity
             price      = req.price or 0.0
             order_type = req.order_type
+            fractional = getattr(req, "fractional", False)
         else:
             symbol     = req["symbol"]
             side       = req["side"]
-            qty        = req["quantity"]
+            qty        = req.get("quantity") or req.get("qty")
             price      = req.get("price", 0.0) or 0.0
             order_type = req.get("order_type", "LMT")
+            fractional = req.get("fractional", False)
 
         if not self._connected or not self._ib:
             raise RuntimeError("IBKR 미연결")
@@ -376,7 +382,7 @@ class IBKRBroker(BaseBroker):
         self._order_map[order_id] = internal_id
 
         c = _make_stk_contract(symbol)
-        o = _make_ibkr_order(side, qty, order_type, price)
+        o = _make_ibkr_order(side, qty, order_type, price, fractional)
 
         self._ib.placeOrder(order_id, c, o)
 
