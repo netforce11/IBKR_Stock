@@ -13,7 +13,6 @@ from PyQt6.QtWidgets import (
     QWidget, QProgressBar, QSizePolicy, QGridLayout,
 )
 from PyQt6.QtCore import Qt, pyqtSlot
-from PyQt6.QtGui import QFont, QColor
 
 from shared.core.bus import DataBus
 from shared.core.topics import Topics
@@ -72,22 +71,22 @@ class _Card(QFrame):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         vlay = QVBoxLayout(self)
-        vlay.setContentsMargins(10, 6, 10, 6)
-        vlay.setSpacing(1)
+        vlay.setContentsMargins(10, 7, 10, 7)
+        vlay.setSpacing(2)
 
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"color:{_GRAY}; font-size:10px; font-weight:600;"
+        title_lbl.setStyleSheet(f"color:{_GRAY}; font-size:14px; font-weight:600;"
                                 "background:transparent; border:none;")
         vlay.addWidget(title_lbl)
 
         self._val_lbl = QLabel("--")
         self._val_lbl.setStyleSheet(
-            "color:#E2E8F0; font-size:15px; font-weight:700;"
+            "color:#E2E8F0; font-size:19px; font-weight:700;"
             "background:transparent; border:none;")
         vlay.addWidget(self._val_lbl)
 
         self._sub_lbl = QLabel("")
-        self._sub_lbl.setStyleSheet(f"color:{_GRAY}; font-size:10px;"
+        self._sub_lbl.setStyleSheet(f"color:{_GRAY}; font-size:14px;"
                                     "background:transparent; border:none;")
         self._sub_lbl.setVisible(False)
         vlay.addWidget(self._sub_lbl)
@@ -95,13 +94,13 @@ class _Card(QFrame):
     def set_value(self, text: str, color: str = "#E2E8F0") -> None:
         self._val_lbl.setText(text)
         self._val_lbl.setStyleSheet(
-            f"color:{color}; font-size:15px; font-weight:700;"
+            f"color:{color}; font-size:19px; font-weight:700;"
             "background:transparent; border:none;")
 
     def set_sub(self, text: str, color: str = _GRAY) -> None:
         self._sub_lbl.setText(text)
         self._sub_lbl.setStyleSheet(
-            f"color:{color}; font-size:10px; background:transparent; border:none;")
+            f"color:{color}; font-size:14px; background:transparent; border:none;")
         self._sub_lbl.setVisible(bool(text))
 
 
@@ -111,7 +110,7 @@ class _Card(QFrame):
 class AccountPanel(BasePanel):
     PANEL_ID    = "account"
     TITLE       = "💰 계좌"
-    DEFAULT_SIZE = (320, 480)
+    DEFAULT_SIZE = (340, 540)
 
     def __init__(self, bus: DataBus, parent: QWidget | None = None) -> None:
         super().__init__(bus, parent)
@@ -124,17 +123,16 @@ class AccountPanel(BasePanel):
 
         # ── 연결 상태 배지 ─────────────────────────────────
         status_row = QHBoxLayout()
-        status_row.setContentsMargins(4, 2, 4, 2)
+        status_row.setContentsMargins(4, 3, 4, 3)
 
         self._conn_dot = QLabel("●")
-        self._conn_dot.setStyleSheet(f"color:{_GRAY}; font-size:10px;")
+        self._conn_dot.setStyleSheet(f"color:{_GRAY}; font-size:14px;")
         self._conn_lbl = QLabel("연결 대기 중")
         self._conn_lbl.setStyleSheet(
-            f"color:{_GRAY}; font-size:10px; font-weight:600;")
+            f"color:{_GRAY}; font-size:14px; font-weight:600;")
 
         self._acct_lbl = QLabel("")
-        self._acct_lbl.setStyleSheet(
-            f"color:{_GRAY}; font-size:10px;")
+        self._acct_lbl.setStyleSheet(f"color:{_GRAY}; font-size:13px;")
         self._acct_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         status_row.addWidget(self._conn_dot)
@@ -181,17 +179,17 @@ class AccountPanel(BasePanel):
             "border-radius:6px; }}")
         margin_vlay = QVBoxLayout(margin_frame)
         margin_vlay.setContentsMargins(10, 8, 10, 8)
-        margin_vlay.setSpacing(4)
+        margin_vlay.setSpacing(5)
 
         # 헤더 행
         hdr = QHBoxLayout()
         m_title = QLabel("마진 사용률")
         m_title.setStyleSheet(
-            f"color:{_GRAY}; font-size:10px; font-weight:600;"
+            f"color:{_GRAY}; font-size:14px; font-weight:600;"
             "background:transparent; border:none;")
         self._margin_pct_lbl = QLabel("-- %")
         self._margin_pct_lbl.setStyleSheet(
-            "color:#E2E8F0; font-size:12px; font-weight:700;"
+            "color:#E2E8F0; font-size:16px; font-weight:700;"
             "background:transparent; border:none;")
         self._margin_pct_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         hdr.addWidget(m_title)
@@ -204,17 +202,17 @@ class AccountPanel(BasePanel):
         self._margin_bar.setRange(0, 100)
         self._margin_bar.setValue(0)
         self._margin_bar.setTextVisible(False)
-        self._margin_bar.setFixedHeight(8)
+        self._margin_bar.setFixedHeight(10)
         self._margin_bar.setStyleSheet(self._bar_style(_BLUE))
         margin_vlay.addWidget(self._margin_bar)
 
         # 마진 세부 행 (유지마진 / 초과유동성)
         detail_row = QHBoxLayout()
-        self._maint_lbl = QLabel("유지마진: --")
+        self._maint_lbl  = QLabel("유지마진: --")
         self._excess_lbl = QLabel("초과유동성: --")
         for lbl in (self._maint_lbl, self._excess_lbl):
             lbl.setStyleSheet(
-                f"color:{_GRAY}; font-size:10px;"
+                f"color:{_GRAY}; font-size:14px;"
                 "background:transparent; border:none;")
         self._excess_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
         detail_row.addWidget(self._maint_lbl)
@@ -231,16 +229,16 @@ class AccountPanel(BasePanel):
             "border-radius:6px; }}")
         stats_grid = QGridLayout(stats_frame)
         stats_grid.setContentsMargins(10, 8, 10, 8)
-        stats_grid.setSpacing(3)
+        stats_grid.setSpacing(4)
 
         def _stat_pair(row: int, label: str):
             lbl = QLabel(label + ":")
             lbl.setStyleSheet(
-                f"color:{_GRAY}; font-size:10px;"
+                f"color:{_GRAY}; font-size:14px;"
                 "background:transparent; border:none;")
             val = QLabel("--")
             val.setStyleSheet(
-                "color:#E2E8F0; font-size:10px; font-weight:600;"
+                "color:#E2E8F0; font-size:14px; font-weight:600;"
                 "background:transparent; border:none;")
             val.setAlignment(Qt.AlignmentFlag.AlignRight)
             stats_grid.addWidget(lbl, row, 0)
@@ -260,8 +258,8 @@ class AccountPanel(BasePanel):
     @staticmethod
     def _bar_style(color: str) -> str:
         return (
-            "QProgressBar { border:none; border-radius:4px; background:#1E293B; }"
-            f"QProgressBar::chunk {{ border-radius:4px; background:{color}; }}"
+            "QProgressBar { border:none; border-radius:5px; background:#1E293B; }"
+            f"QProgressBar::chunk {{ border-radius:5px; background:{color}; }}"
         )
 
     # ── 구독 ───────────────────────────────────────────────
@@ -280,18 +278,18 @@ class AccountPanel(BasePanel):
     @pyqtSlot(object)
     def _on_account(self, data: dict) -> None:
         """Topics.ACCOUNT_UPDATE 수신 — 전체 갱신."""
-        net_liq         = data.get("net_liquidation")
-        cash            = data.get("cash_balance")
-        buying_power    = data.get("buying_power")
-        avail           = data.get("available_funds")
-        unrealized      = data.get("unrealized_pnl")
-        daily_pnl       = data.get("daily_pnl")
-        realized        = data.get("realized_pnl")
-        maint_margin    = data.get("maintenance_margin")
-        init_margin     = data.get("initial_margin")
-        excess_liq      = data.get("excess_liquidity")
-        currency        = data.get("currency", "USD")
-        account_id      = data.get("account_id", "")
+        net_liq      = data.get("net_liquidation")
+        cash         = data.get("cash_balance")
+        buying_power = data.get("buying_power")
+        avail        = data.get("available_funds")
+        unrealized   = data.get("unrealized_pnl")
+        daily_pnl    = data.get("daily_pnl")
+        realized     = data.get("realized_pnl")
+        maint_margin = data.get("maintenance_margin")
+        init_margin  = data.get("initial_margin")
+        excess_liq   = data.get("excess_liquidity")
+        currency     = data.get("currency", "USD")
+        account_id   = data.get("account_id", "")
 
         # 총 자산
         self._c_net_liq.set_value(_fmt_usd_plain(net_liq))
@@ -307,7 +305,7 @@ class AccountPanel(BasePanel):
 
         # 매수 가능
         self._c_buying.set_value(_fmt_usd_plain(buying_power))
-        if buying_power is not None and net_liq and net_liq > 0:
+        if buying_power is not None and net_liq is not None and net_liq > 0:
             lev = buying_power / net_liq
             self._c_buying.set_sub(f"레버리지 {lev:.1f}x")
 
@@ -319,7 +317,7 @@ class AccountPanel(BasePanel):
             _fmt_usd(unrealized),
             _pnl_color(unrealized or 0)
         )
-        if unrealized is not None and net_liq and net_liq > 0:
+        if unrealized is not None and net_liq is not None and net_liq > 0:
             pct = unrealized / net_liq * 100
             self._c_unreal.set_sub(f"{pct:+.2f}%", _pnl_color(unrealized))
 
@@ -330,40 +328,39 @@ class AccountPanel(BasePanel):
         )
 
         # 마진 사용률
-        if net_liq and maint_margin is not None and net_liq > 0:
+        if maint_margin is not None and net_liq is not None and net_liq > 0:
             pct = min(maint_margin / net_liq * 100, 100.0)
             self._margin_bar.setValue(int(pct))
             self._margin_pct_lbl.setText(f"{pct:.1f} %")
             if pct >= _MARGIN_CRIT:
-                color = _RED
+                bar_color = _RED
             elif pct >= _MARGIN_WARN:
-                color = _YELLOW
+                bar_color = _YELLOW
             else:
-                color = _BLUE
-            self._margin_bar.setStyleSheet(self._bar_style(color))
+                bar_color = _BLUE
+            self._margin_bar.setStyleSheet(self._bar_style(bar_color))
             self._margin_pct_lbl.setStyleSheet(
-                f"color:{color}; font-size:12px; font-weight:700;"
+                f"color:{bar_color}; font-size:16px; font-weight:700;"
                 "background:transparent; border:none;")
         else:
             self._margin_bar.setValue(0)
             self._margin_pct_lbl.setText("-- %")
 
-        self._maint_lbl.setText(
-            f"유지마진: {_fmt_usd_plain(maint_margin)}")
-        self._excess_lbl.setText(
-            f"초과유동성: {_fmt_usd_plain(excess_liq)}")
+        self._maint_lbl.setText(f"유지마진: {_fmt_usd_plain(maint_margin)}")
+        self._excess_lbl.setText(f"초과유동성: {_fmt_usd_plain(excess_liq)}")
 
         # 통계 행
-        self._realized_val.setText(
-            _fmt_usd(realized) if realized is not None else "--")
         if realized is not None:
+            self._realized_val.setText(_fmt_usd(realized))
             self._realized_val.setStyleSheet(
-                f"color:{_pnl_color(realized)}; font-size:10px; font-weight:600;"
+                f"color:{_pnl_color(realized)}; font-size:14px; font-weight:600;"
                 "background:transparent; border:none;")
+        else:
+            self._realized_val.setText("--")
 
         self._init_margin_v.setText(_fmt_usd_plain(init_margin))
 
-        if buying_power is not None and net_liq and net_liq > 0:
+        if buying_power is not None and net_liq is not None and net_liq > 0:
             lev = buying_power / net_liq
             self._leverage_val.setText(f"{lev:.2f}x")
         else:
@@ -383,18 +380,17 @@ class AccountPanel(BasePanel):
     @pyqtSlot(object)
     def _on_connected(self, data: dict) -> None:
         broker = data.get("broker", "")
-        self._conn_dot.setStyleSheet(f"color:{_GREEN}; font-size:10px;")
+        self._conn_dot.setStyleSheet(f"color:{_GREEN}; font-size:14px;")
         self._conn_lbl.setStyleSheet(
-            f"color:{_GREEN}; font-size:10px; font-weight:600;")
+            f"color:{_GREEN}; font-size:14px; font-weight:600;")
         self._conn_lbl.setText(f"연결됨 ({broker})")
 
     @pyqtSlot(object)
     def _on_disconnected(self, data: dict) -> None:
-        self._conn_dot.setStyleSheet(f"color:{_RED}; font-size:10px;")
+        self._conn_dot.setStyleSheet(f"color:{_RED}; font-size:14px;")
         self._conn_lbl.setStyleSheet(
-            f"color:{_RED}; font-size:10px; font-weight:600;")
+            f"color:{_RED}; font-size:14px; font-weight:600;")
         self._conn_lbl.setText("연결 끊김")
-        # 값 초기화
         for card in (self._c_net_liq, self._c_cash, self._c_buying,
                      self._c_avail, self._c_unreal, self._c_daily_pnl):
             card.set_value("--")
