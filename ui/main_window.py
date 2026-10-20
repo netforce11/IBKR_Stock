@@ -384,8 +384,7 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("준비")
 
         # ── 가상화면 단축키 Ctrl+1 ~ Ctrl+6 ────────────────
-        from PyQt6.QtGui import QKeySequence
-        from PyQt6.QtWidgets import QShortcut
+        from PyQt6.QtGui import QKeySequence, QShortcut
         for n in range(1, _NUM_SLOTS + 1):
             sc = QShortcut(QKeySequence(f"Ctrl+{n}"), self)
             sc.activated.connect(lambda _n=n: self._switch_slot(_n))
