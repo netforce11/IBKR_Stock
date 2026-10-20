@@ -169,6 +169,25 @@ if IBAPI_OK:
         def accountSummaryEnd(self, req_id: int) -> None:
             self._b._tick_queue.put_nowait(("account_summary_end", req_id))
 
+        # ── reqAccountUpdates 실시간 콜백 ─────────────────────
+        def updateAccountValue(self, key: str, val: str,
+                               currency: str, account_name: str) -> None:
+            self._b._tick_queue.put_nowait(
+                ("account_value", key, val, account_name))
+
+        def updatePortfolio(self, contract: Any, position: float,
+                            market_price: float, market_value: float,
+                            average_cost: float, unrealized_pnl: float,
+                            realized_pnl: float, account_name: str) -> None:
+            if contract.secType != "STK":
+                return
+            self._b._tick_queue.put_nowait(
+                ("portfolio_update", contract.symbol, position,
+                 market_price, unrealized_pnl, realized_pnl))
+
+        def accountDownloadEnd(self, account_name: str) -> None:
+            self._b._tick_queue.put_nowait(("account_download_end",))
+
         # ── 분봉 히스토리 콜백 ────────────────────────────────
         def historicalData(self, req_id: int, bar: Any) -> None:
             self._b._tick_queue.put_nowait(("historical_bar", req_id, bar))
@@ -283,8 +302,11 @@ class IBKRBroker(BaseBroker):
                           {"broker": "ibkr",
                            "host": self._host, "port": self._port})
 
-        # 포지션 + 잔고 구독 시작
+        # 포지션 구독
         self._ib.reqPositions()
+        # 잔고 실시간 구독 (reqAccountUpdates = push 방식, 변경 시마다 수신)
+        self._ib.reqAccountUpdates(True, "")
+        # snapshot 조회도 병행 (AccountType 등 일부 태그는 reqAccountSummary에만 있음)
         self._acct_summary_req_id = self._next_req_id
         self._ib.reqAccountSummary(
             self._next_req_id, "All",
@@ -292,7 +314,6 @@ class IBKRBroker(BaseBroker):
             "UnrealizedPnL,RealizedPnL,MaintMarginReq,InitMarginReq,"
             "ExcessLiquidity,AccountType")
         self._next_req_id += 1
-        # 30초마다 자동 갱신
         self._acct_buf: dict = {}
         log.info("IBKRBroker 연결 성공 — %s:%d", self._host, self._port)
 
@@ -476,6 +497,18 @@ class IBKRBroker(BaseBroker):
                     self._on_account_summary(tag, value, account_id)
                 elif kind == "account_summary_end":
                     self._on_account_summary_end()
+                elif kind == "account_value":
+                    # reqAccountUpdates → updateAccountValue 실시간 수신
+                    _, key, val, acct = item
+                    self._on_account_value(key, val, acct)
+                elif kind == "portfolio_update":
+                    # reqAccountUpdates → updatePortfolio 실시간 수신
+                    _, sym, pos, mkt_price, unreal_pnl, real_pnl = item
+                    self._on_portfolio_update(sym, pos, mkt_price,
+                                              unreal_pnl, real_pnl)
+                elif kind == "account_download_end":
+                    # 초기 스냅샷 완료 → ACCOUNT_UPDATE publish
+                    self._on_account_summary_end()
                 elif kind == "historical_bar":
                     _, req_id, bar = item
                     self._on_historical_bar(req_id, bar)
@@ -584,6 +617,9 @@ class IBKRBroker(BaseBroker):
         log.info("체결: %s %s %d @ %.2f",
                  execution.side, contract.symbol,
                  int(execution.shares), execution.price)
+        # 체결 후 잔고 즉시 재조회 (reqAccountUpdates는 push지만 딜레이 있을 수 있음)
+        if self._ib:
+            self._ib.reqAccountUpdates(True, "")
 
     # tag → ACCOUNT_UPDATE dict 키 매핑
     _ACCT_TAG_MAP = {
@@ -635,6 +671,51 @@ class IBKRBroker(BaseBroker):
         self._bus.publish(Topics.ACCOUNT_UPDATE, data)
         log.debug("ACCOUNT_UPDATE published: %s", {k: v for k, v in data.items()
                                                     if k != "account_type"})
+
+    # reqAccountUpdates 태그 매핑 (updateAccountValue)
+    _ACCT_VALUE_MAP = {
+        "NetLiquidation":        "net_liquidation",
+        "TotalCashBalance":      "cash_balance",
+        "BuyingPower":           "buying_power",
+        "AvailableFunds":        "available_funds",
+        "UnrealizedPnL":         "unrealized_pnl",
+        "RealizedPnL":           "realized_pnl",
+        "MaintMarginReq":        "maintenance_margin",
+        "InitMarginReq":         "initial_margin",
+        "ExcessLiquidity":       "excess_liquidity",
+        "AccountType":           "account_type",
+        "GrossPositionValue":    "gross_position_value",
+    }
+
+    def _on_account_value(self, key: str, val: str, acct: str) -> None:
+        """reqAccountUpdates → updateAccountValue 실시간 처리"""
+        mapped = self._ACCT_VALUE_MAP.get(key)
+        if not mapped:
+            return
+        if acct:
+            self._acct_buf["account_id"] = acct
+        if mapped == "account_type":
+            self._acct_buf[mapped] = val
+        else:
+            try:
+                self._acct_buf[mapped] = float(val)
+            except (ValueError, TypeError):
+                pass
+        # 핵심 값 수신 시마다 즉시 publish (실시간 반영)
+        if mapped in ("net_liquidation", "cash_balance", "buying_power",
+                      "unrealized_pnl"):
+            self._on_account_summary_end()
+
+    def _on_portfolio_update(self, symbol: str, position: float,
+                             market_price: float,
+                             unrealized_pnl: float, realized_pnl: float) -> None:
+        """reqAccountUpdates → updatePortfolio 포지션 시가 실시간 처리"""
+        self._bus.publish(
+            Topics.portfolio_position(symbol),
+            {"symbol": symbol, "qty": int(position),
+             "market_price": market_price,
+             "unrealized_pnl": unrealized_pnl,
+             "realized_pnl": realized_pnl})
 
     def _on_historical_bar(self, req_id: int, bar: Any) -> None:
         entry = self._hist_callbacks.get(req_id)
