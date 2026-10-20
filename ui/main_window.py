@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QMessageBox,
 )
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 
 from config.settings import CONFIG, LAYOUT_FILE, DATA_DIR
 from shared.core.bus import get_bus
