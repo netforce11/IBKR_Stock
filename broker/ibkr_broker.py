@@ -179,7 +179,8 @@ if IBAPI_OK:
                         benchmark: str, projection: str,
                         legs_str: str) -> None:
             self._b._tick_queue.put_nowait(
-                ("scanner_row", req_id, rank, contract_details))
+                ("scanner_row", req_id, rank, contract_details,
+                 distance, benchmark, projection))
 
         def scannerDataEnd(self, req_id: int) -> None:
             self._b._tick_queue.put_nowait(("scanner_end", req_id))
@@ -468,8 +469,13 @@ class IBKRBroker(BaseBroker):
                     _, req_id = item
                     self._on_historical_end(req_id)
                 elif kind == "scanner_row":
-                    _, req_id, rank, contract_details = item
-                    self._on_scanner_row(req_id, rank, contract_details)
+                    # ("scanner_row", req_id, rank, cd, distance, benchmark, projection)
+                    _, req_id, rank, contract_details = item[:4]
+                    distance   = item[4] if len(item) > 4 else ""
+                    benchmark  = item[5] if len(item) > 5 else ""
+                    projection = item[6] if len(item) > 6 else ""
+                    self._on_scanner_row(req_id, rank, contract_details,
+                                         distance, benchmark, projection)
                 elif kind == "scanner_end":
                     _, req_id = item
                     self._on_scanner_end(req_id)
@@ -641,15 +647,37 @@ class IBKRBroker(BaseBroker):
         self._scanner_buf.pop(req_id, None)
 
     def _on_scanner_row(self, req_id: int, rank: int,
-                        contract_details: Any) -> None:
+                        contract_details: Any,
+                        distance: str = "", benchmark: str = "",
+                        projection: str = "", legs_str: str = "") -> None:
         if req_id not in self._scanner_buf:
             return
         c = contract_details.contract
+
+        # TWS 스캐너는 price/change 를 distance/benchmark 필드로 전달
+        # distance  = 현재가 문자열 (예: "125.43")
+        # benchmark = 등락률 또는 등락액 (예: "2.35")
+        def _f(s: str) -> float:
+            try:
+                return float(s) if s else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        price      = _f(distance)
+        change_pct = _f(benchmark)
+        change     = round(price * change_pct / 100, 2) if price else 0.0
+
         self._scanner_buf[req_id]["rows"].append({
-            "rank":     rank + 1,
-            "symbol":   c.symbol,
-            "exchange": c.primaryExch or c.exchange,
-            "currency": c.currency,
+            "rank":       rank + 1,
+            "symbol":     c.symbol,
+            "exchange":   c.primaryExch or c.exchange,
+            "currency":   c.currency,
+            "price":      price,
+            "change":     change,
+            "change_pct": change_pct,
+            "volume":     0,
+            "avg_volume": 0,
+            "market_cap": 0,
         })
 
     def _on_scanner_end(self, req_id: int) -> None:

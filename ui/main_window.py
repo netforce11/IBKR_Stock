@@ -293,6 +293,13 @@ class MainWindow(QMainWindow):
         log.info("Boot Step2: Broker connect (async)")
         self._status_bar.showMessage("Step2: Broker 연결 중... (TWS/Gateway 응답 대기)")
 
+        # 연결 진행 중 점점이 애니메이션 (1초 간격)
+        self._connect_dots = 0
+        self._connect_timer = QTimer(self)
+        self._connect_timer.setInterval(1000)
+        self._connect_timer.timeout.connect(self._animate_connecting)
+        self._connect_timer.start()
+
         self._broker_thread = _BrokerConnectThread(self._bus, self)
         self._broker_thread.succeeded.connect(
             self._on_broker_connect_ok, Qt.ConnectionType.QueuedConnection)
@@ -300,8 +307,18 @@ class MainWindow(QMainWindow):
             self._on_broker_connect_fail, Qt.ConnectionType.QueuedConnection)
         self._broker_thread.start()
 
+    def _animate_connecting(self) -> None:
+        self._connect_dots = (self._connect_dots % 5) + 1
+        dots = "●" * self._connect_dots + "○" * (5 - self._connect_dots)
+        self._status_bar.showMessage(
+            f"IBKR 연결 시도 중 {dots}  (TWS/Gateway가 실행 중인지 확인하세요)"
+        )
+
     def _on_broker_connect_ok(self, broker) -> None:
         log.info("Boot Step2: Broker connect OK")
+        if hasattr(self, "_connect_timer"):
+            self._connect_timer.stop()
+            self._connect_timer.deleteLater()
         self._broker = broker
         # IBKRBroker: ibapi 스레드 → tick_queue → Qt 메인 스레드 드레인
         # 50ms 간격으로 메인 스레드에서 tick_queue 소비 (힙 손상 방지)
@@ -316,6 +333,9 @@ class MainWindow(QMainWindow):
 
     def _on_broker_connect_fail(self, err_msg: str) -> None:
         log.error("Broker connect failed: %s", err_msg)
+        if hasattr(self, "_connect_timer"):
+            self._connect_timer.stop()
+            self._connect_timer.deleteLater()
 
         # MockBroker로 자동 폴백 — 나머지 부팅 계속 진행
         from shared.broker.mock_broker import MockBroker
@@ -327,31 +347,101 @@ class MainWindow(QMainWindow):
 
         self._status_bar.showMessage("⚠ MockBroker 모드 (IBKR 미연결)")
 
-        # 사용자에게 비차단 방식으로 알림 (QMessageBox는 이벤트 루프 블로킹 → 직접 배너 표시)
-        from PyQt6.QtWidgets import QLabel
+        # 사용자에게 비차단 방식으로 알림 — 재연결 버튼 포함
+        from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
         from PyQt6.QtCore import QTimer
-        banner = QLabel(
-            f"  ⚠  IBKR 연결 실패 — MockBroker 모드로 실행 중\n"
-            f"  원인: {err_msg}\n"
-            f"  (TWS/Gateway를 실행한 뒤 재시작하세요)",
-            self,
+
+        self._conn_banner = QWidget(self)
+        self._conn_banner.setStyleSheet(
+            "QWidget { background:#FEF3C7; border:1px solid #F59E0B;"
+            " border-radius:4px; }"
         )
-        banner.setStyleSheet(
-            "QLabel { background:#FEF3C7; color:#92400E; border:1px solid #F59E0B;"
-            " border-radius:4px; padding:8px 12px; font-size:12px; }"
+        blay = QHBoxLayout(self._conn_banner)
+        blay.setContentsMargins(10, 8, 10, 8)
+
+        lbl = QLabel(
+            f"⚠  IBKR 연결 실패 — MockBroker 모드 실행 중\n"
+            f"원인: {err_msg[:80]}\n"
+            f"TWS/Gateway 실행 후 [재연결] 버튼을 누르세요"
         )
-        banner.setWordWrap(True)
-        banner.adjustSize()
-        # 메인 윈도우 중앙 상단에 배치
-        bw = min(self.width() - 40, 600)
-        banner.setFixedWidth(bw)
-        banner.move((self.width() - bw) // 2, 60)
-        banner.show()
-        banner.raise_()
-        # 10초 후 자동 제거
-        QTimer.singleShot(10_000, banner.deleteLater)
+        lbl.setStyleSheet("color:#92400E; font-size:12px; border:none;")
+        lbl.setWordWrap(True)
+        blay.addWidget(lbl, 1)
+
+        reconnect_btn = QPushButton("🔄 재연결")
+        reconnect_btn.setStyleSheet(
+            "QPushButton { background:#F59E0B; color:#fff; font-weight:bold;"
+            " border:none; border-radius:3px; padding:6px 14px; font-size:12px; }"
+            "QPushButton:hover { background:#D97706; }"
+        )
+        reconnect_btn.clicked.connect(self._reconnect_ibkr)
+        blay.addWidget(reconnect_btn)
+
+        close_btn = QPushButton("✕")
+        close_btn.setStyleSheet(
+            "QPushButton { background:transparent; color:#92400E;"
+            " border:none; font-size:14px; padding:2px 6px; }"
+        )
+        close_btn.clicked.connect(self._conn_banner.hide)
+        blay.addWidget(close_btn)
+
+        bw = min(self.width() - 40, 640)
+        self._conn_banner.setFixedWidth(bw)
+        self._conn_banner.adjustSize()
+        self._conn_banner.move((self.width() - bw) // 2, 60)
+        self._conn_banner.show()
+        self._conn_banner.raise_()
 
         self._boot_step3()
+
+    def _reconnect_ibkr(self) -> None:
+        """배너의 재연결 버튼 → IBKRBroker 재연결 시도"""
+        if hasattr(self, "_conn_banner"):
+            self._conn_banner.hide()
+        self._status_bar.showMessage("IBKR 재연결 시도 중...")
+        self._connect_dots = 0
+        self._connect_timer = QTimer(self)
+        self._connect_timer.setInterval(1000)
+        self._connect_timer.timeout.connect(self._animate_connecting)
+        self._connect_timer.start()
+
+        self._broker_thread = _BrokerConnectThread(self._bus, self)
+        self._broker_thread.succeeded.connect(
+            self._on_reconnect_ok, Qt.ConnectionType.QueuedConnection)
+        self._broker_thread.failed.connect(
+            self._on_reconnect_fail, Qt.ConnectionType.QueuedConnection)
+        self._broker_thread.start()
+
+    def _on_reconnect_ok(self, broker) -> None:
+        if hasattr(self, "_connect_timer"):
+            self._connect_timer.stop()
+            self._connect_timer.deleteLater()
+        self._broker = broker
+        # IBKRBroker drain timer
+        if hasattr(broker, "drain_tick_queue"):
+            from PyQt6.QtCore import QTimer as _QT
+            if not hasattr(self, "_tick_drain_timer") or not self._tick_drain_timer.isActive():
+                self._tick_drain_timer = _QT(self)
+                self._tick_drain_timer.setInterval(50)
+                self._tick_drain_timer.timeout.connect(broker.drain_tick_queue)
+                self._tick_drain_timer.start()
+        # 스캐너 패널에 새 broker 전달
+        if hasattr(self, "_scanner_panel") and self._scanner_panel:
+            self._scanner_panel._broker = broker
+        self._status_bar.showMessage("✅ IBKR 재연결 성공")
+        log.info("IBKR 재연결 성공")
+
+    def _on_reconnect_fail(self, err_msg: str) -> None:
+        if hasattr(self, "_connect_timer"):
+            self._connect_timer.stop()
+            self._connect_timer.deleteLater()
+        self._status_bar.showMessage(f"❌ IBKR 재연결 실패: {err_msg[:60]}")
+        log.error("IBKR 재연결 실패: %s", err_msg)
+        # 배너 다시 표시
+        if hasattr(self, "_conn_banner"):
+            from PyQt6.QtWidgets import QLabel
+            self._conn_banner.show()
+            self._conn_banner.raise_()
 
     def _boot_step3(self) -> None:
         log.info("Boot Step3: Feed + DB start")

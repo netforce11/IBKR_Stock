@@ -122,6 +122,12 @@ class ScannerPanel(BasePanel):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._do_scan)
 
+        # 조회 버튼 타임아웃 복구 (응답 없을 경우 15초 후 버튼 재활성)
+        self._scan_timeout = QTimer(self)
+        self._scan_timeout.setSingleShot(True)
+        self._scan_timeout.setInterval(15_000)
+        self._scan_timeout.timeout.connect(self._on_scan_timeout)
+
         self.setStyleSheet(
             f"background:{_BG}; color:{_TEXT};" + _INPUT_STYLE)
         self._build_ui()
@@ -187,21 +193,24 @@ class ScannerPanel(BasePanel):
 
         self._min_price = QDoubleSpinBox()
         self._min_price.setRange(0, 99999)
-        self._min_price.setValue(1.0)
+        self._min_price.setValue(100.0)   # 기본 $100
         self._min_price.setPrefix("$")
+        self._min_price.setMinimumHeight(32)
         flt_form.addRow("최소 가격", self._min_price)
 
         self._max_price = QDoubleSpinBox()
         self._max_price.setRange(0, 99999)
-        self._max_price.setValue(0.0)
+        self._max_price.setValue(1000.0)  # 기본 $1000
         self._max_price.setPrefix("$")
         self._max_price.setToolTip("0 = 제한 없음")
+        self._max_price.setMinimumHeight(32)
         flt_form.addRow("최대 가격", self._max_price)
 
         self._min_vol = QSpinBox()
         self._min_vol.setRange(0, 999_999_999)
         self._min_vol.setValue(500_000)
         self._min_vol.setSingleStep(100_000)
+        self._min_vol.setMinimumHeight(32)
         flt_form.addRow("최소 거래량", self._min_vol)
 
         lay.addWidget(grp_flt)
@@ -363,21 +372,42 @@ class ScannerPanel(BasePanel):
     # 조회
     # ════════════════════════════════════════════════════════
     def _do_scan(self) -> None:
+        if self._broker is None:
+            self._set_status("❌ 브로커 미연결 — 앱을 재시작하거나 IBKR을 연결하세요")
+            return
         scan_code = self._scan_combo.currentData()
         location  = self._market_combo.currentData()
+        min_p = self._min_price.value()
+        max_p = self._max_price.value()
         filters = {
             "market":       "STK",
             "location":     location,
-            "min_price":    self._min_price.value(),
-            "max_price":    self._max_price.value(),
+            "min_price":    min_p,
+            "max_price":    max_p if max_p > 0 else 0,
             "above_volume": self._min_vol.value(),
         }
         self._req_id += 1
         self._btn_scan.setEnabled(False)
         self._btn_scan.setText("조회 중...")
-        self._set_status(f"⏳ {scan_code} 조회 요청 중...")
-        log.info("Scanner scan: req_id=%d code=%s", self._req_id, scan_code)
-        self._broker.request_scanner(self._req_id, scan_code, filters)
+        self._set_status(f"⏳ {scan_code} 조회 중... (req_id={self._req_id})")
+        self._scan_timeout.start()   # 15초 타임아웃 시작
+        log.info("Scanner scan: req_id=%d code=%s filters=%s",
+                 self._req_id, scan_code, filters)
+        try:
+            self._broker.request_scanner(self._req_id, scan_code, filters)
+        except Exception as e:
+            log.exception("request_scanner 실패")
+            self._scan_timeout.stop()
+            self._btn_scan.setEnabled(True)
+            self._btn_scan.setText("조회")
+            self._set_status(f"❌ 스캐너 요청 실패: {e}")
+
+    def _on_scan_timeout(self) -> None:
+        """15초 이내 응답 없을 경우 버튼 복구"""
+        log.warning("Scanner timeout — 응답 없음 (req_id=%d)", self._req_id)
+        self._btn_scan.setEnabled(True)
+        self._btn_scan.setText("조회")
+        self._set_status("⏰ 조회 타임아웃 — IBKR 연결 상태를 확인하세요")
 
     # ════════════════════════════════════════════════════════
     # 결과 수신 / 표시
@@ -392,6 +422,7 @@ class ScannerPanel(BasePanel):
         # 현재 요청 코드와 다를 경우 무시 (다른 패널 요청)
         # req_id 기반 필터링 — 매칭되지 않아도 표시 (단일 패널)
 
+        self._scan_timeout.stop()   # 타임아웃 취소
         self._last_result = data
         self._render_table(results)
 
