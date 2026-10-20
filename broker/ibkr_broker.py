@@ -678,16 +678,34 @@ class IBKRBroker(BaseBroker):
             return
 
         flt = filters or {}
-        sub            = ScannerSubscription()
-        sub.instrument = flt.get("market", "STK")
+        sub              = ScannerSubscription()
+        sub.instrument   = flt.get("market", "STK")
         sub.locationCode = flt.get("location", "STK.US.MAJOR")
-        sub.scanCode   = scan_code
-        sub.abovePrice = flt.get("min_price",  1.0)
-        sub.belowPrice = flt.get("max_price",  0.0)   # 0 = 무제한
-        sub.aboveVolume = int(flt.get("above_volume", 0))
-        sub.marketCapAbove = flt.get("mktcap_above", 0.0)
-        sub.marketCapBelow = flt.get("mktcap_below", 0.0)
-        sub.numberOfRows = 50
+        sub.scanCode     = scan_code
+        sub.numberOfRows = int(flt.get("num_rows", 50))
+
+        # 가격 필터 — 0 이면 IBKR이 무제한으로 처리
+        min_p = flt.get("min_price", 0.0)
+        max_p = flt.get("max_price", 0.0)
+        if min_p and min_p > 0:
+            sub.abovePrice = float(min_p)
+        if max_p and max_p > 0:
+            sub.belowPrice = float(max_p)
+
+        # 거래량 필터 — MOST_ACTIVE 계열에는 생략 (이미 거래량순 정렬)
+        vol = int(flt.get("above_volume", 0))
+        _no_vol_codes = {"MOST_ACTIVE", "MOST_ACTIVE_USD",
+                         "MOST_ACTIVE_AVG_USD", "HOT_BY_VOLUME"}
+        if vol > 0 and scan_code not in _no_vol_codes:
+            sub.aboveVolume = vol
+
+        # 시총 필터
+        mktcap_a = flt.get("mktcap_above", 0.0)
+        mktcap_b = flt.get("mktcap_below", 0.0)
+        if mktcap_a:
+            sub.marketCapAbove = float(mktcap_a)
+        if mktcap_b:
+            sub.marketCapBelow = float(mktcap_b)
 
         self._scanner_buf[req_id] = {"scan_code": scan_code, "rows": []}
         self._ib.reqScannerSubscription(req_id, sub, [], [])

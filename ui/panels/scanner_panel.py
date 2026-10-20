@@ -379,12 +379,18 @@ class ScannerPanel(BasePanel):
         location  = self._market_combo.currentData()
         min_p = self._min_price.value()
         max_p = self._max_price.value()
+
+        # MOST_ACTIVE 계열은 자체 거래량 정렬 — 외부 볼륨 필터 제거
+        _no_vol = {"MOST_ACTIVE", "MOST_ACTIVE_USD",
+                   "MOST_ACTIVE_AVG_USD", "HOT_BY_VOLUME"}
+        above_vol = 0 if scan_code in _no_vol else int(self._min_vol.value())
+
         filters = {
             "market":       "STK",
             "location":     location,
             "min_price":    min_p,
             "max_price":    max_p if max_p > 0 else 0,
-            "above_volume": self._min_vol.value(),
+            "above_volume": above_vol,
         }
         self._req_id += 1
         self._btn_scan.setEnabled(False)
