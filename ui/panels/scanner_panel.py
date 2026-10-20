@@ -54,7 +54,7 @@ _BTN_SM   = ("background:#E8ECF0; color:#374151; font-size:11px;"
 _INPUT_STYLE = (
     "QComboBox, QDoubleSpinBox, QSpinBox {"
     "background:#fff; color:#111827; border:1px solid #CDD0D5;"
-    "border-radius:3px; padding:2px 4px; font-size:11px;}"
+    "border-radius:3px; padding:6px 4px; font-size:13px; min-height:28px;}"
 )
 _GROUP_STYLE = (
     "QGroupBox { font-size:11px; font-weight:bold; color:#1565C0;"
