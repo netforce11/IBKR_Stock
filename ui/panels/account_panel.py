@@ -173,7 +173,8 @@ class AccountPanel(BasePanel):
         self._layout.addWidget(grid_wrap)
 
         # ── 마진 섹션 ──────────────────────────────────────
-        margin_frame = QFrame()
+        self._margin_frame = QFrame()
+        margin_frame = self._margin_frame
         margin_frame.setStyleSheet(
             f"QFrame {{ background:{_CARD}; border:1px solid {_BORDER};"
             "border-radius:6px; }}")
@@ -285,11 +286,16 @@ class AccountPanel(BasePanel):
         unrealized   = data.get("unrealized_pnl")
         daily_pnl    = data.get("daily_pnl")
         realized     = data.get("realized_pnl")
-        maint_margin = data.get("maintenance_margin")
-        init_margin  = data.get("initial_margin")
-        excess_liq   = data.get("excess_liquidity")
-        currency     = data.get("currency", "USD")
-        account_id   = data.get("account_id", "")
+        maint_margin  = data.get("maintenance_margin")
+        init_margin   = data.get("initial_margin")
+        excess_liq    = data.get("excess_liquidity")
+        currency      = data.get("currency", "USD")
+        account_id    = data.get("account_id", "")
+        account_type  = data.get("account_type", "")   # "CASH" or "MARGIN"
+        is_cash_acct  = account_type.upper() == "CASH"
+
+        # 현금계좌면 마진 섹션 숨김
+        self._margin_frame.setVisible(not is_cash_acct)
 
         # 총 자산
         self._c_net_liq.set_value(_fmt_usd_plain(net_liq))

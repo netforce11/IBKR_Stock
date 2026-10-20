@@ -160,10 +160,10 @@ if IBAPI_OK:
         def accountSummary(self, req_id: int, account: str,
                            tag: str, value: str, currency: str) -> None:
             self._b._tick_queue.put_nowait(
-                ("account_summary", tag, value))
+                ("account_summary", tag, value, account))
 
         def accountSummaryEnd(self, req_id: int) -> None:
-            pass
+            self._b._tick_queue.put_nowait(("account_summary_end", req_id))
 
         # ── 분봉 히스토리 콜백 ────────────────────────────────
         def historicalData(self, req_id: int, bar: Any) -> None:
@@ -281,10 +281,15 @@ class IBKRBroker(BaseBroker):
 
         # 포지션 + 잔고 구독 시작
         self._ib.reqPositions()
+        self._acct_summary_req_id = self._next_req_id
         self._ib.reqAccountSummary(
             self._next_req_id, "All",
-            "NetLiquidation,TotalCashValue,BuyingPower,UnrealizedPnL")
+            "NetLiquidation,TotalCashValue,BuyingPower,AvailableFunds,"
+            "UnrealizedPnL,RealizedPnL,MaintMarginReq,InitMarginReq,"
+            "ExcessLiquidity,AccountType")
         self._next_req_id += 1
+        # 30초마다 자동 갱신
+        self._acct_buf: dict = {}
         log.info("IBKRBroker 연결 성공 — %s:%d", self._host, self._port)
 
     def disconnect(self) -> None:
@@ -460,8 +465,11 @@ class IBKRBroker(BaseBroker):
                         Topics.portfolio_position(symbol),
                         {"symbol": symbol, "qty": qty, "avg_cost": avg_cost})
                 elif kind == "account_summary":
-                    _, tag, value = item
-                    self._on_account_summary(tag, value)
+                    _, tag, value = item[0], item[1], item[2]
+                    account_id = item[3] if len(item) > 3 else ""
+                    self._on_account_summary(tag, value, account_id)
+                elif kind == "account_summary_end":
+                    self._on_account_summary_end()
                 elif kind == "historical_bar":
                     _, req_id, bar = item
                     self._on_historical_bar(req_id, bar)
@@ -571,12 +579,56 @@ class IBKRBroker(BaseBroker):
                  execution.side, contract.symbol,
                  int(execution.shares), execution.price)
 
-    def _on_account_summary(self, tag: str, value: str) -> None:
+    # tag → ACCOUNT_UPDATE dict 키 매핑
+    _ACCT_TAG_MAP = {
+        "NetLiquidation":  "net_liquidation",
+        "TotalCashValue":  "cash_balance",
+        "BuyingPower":     "buying_power",
+        "AvailableFunds":  "available_funds",
+        "UnrealizedPnL":   "unrealized_pnl",
+        "RealizedPnL":     "realized_pnl",
+        "MaintMarginReq":  "maintenance_margin",
+        "InitMarginReq":   "initial_margin",
+        "ExcessLiquidity": "excess_liquidity",
+        "AccountType":     "account_type",    # "CASH" / "MARGIN"
+    }
+
+    def _on_account_summary(self, tag: str, value: str,
+                            account_id: str = "") -> None:
+        # 낱개 토픽 (하위 호환)
         try:
             self._bus.publish(Topics.ACCOUNT_BALANCE, {
                 "tag": tag, "value": float(value)})
         except (ValueError, TypeError):
             pass
+        # 버퍼에 누적
+        key = self._ACCT_TAG_MAP.get(tag)
+        if key:
+            if key == "account_type":
+                self._acct_buf[key] = value          # 문자열 그대로
+            else:
+                try:
+                    self._acct_buf[key] = float(value)
+                except (ValueError, TypeError):
+                    pass
+        if account_id:
+            self._acct_buf["account_id"] = account_id
+
+    def _on_account_summary_end(self) -> None:
+        """reqAccountSummary 응답 완료 → ACCOUNT_UPDATE publish"""
+        if not self._acct_buf:
+            return
+        account_type = self._acct_buf.get("account_type", "")
+        data = dict(self._acct_buf)
+        data["currency"] = "USD"
+        # 현금계좌면 마진 항목을 0으로 명시 (IBKR이 0 반환해도 명확히)
+        if account_type.upper() == "CASH":
+            data.setdefault("maintenance_margin", 0.0)
+            data.setdefault("initial_margin", 0.0)
+            data.setdefault("excess_liquidity", data.get("available_funds", 0.0))
+        self._bus.publish(Topics.ACCOUNT_UPDATE, data)
+        log.debug("ACCOUNT_UPDATE published: %s", {k: v for k, v in data.items()
+                                                    if k != "account_type"})
 
     def _on_historical_bar(self, req_id: int, bar: Any) -> None:
         entry = self._hist_callbacks.get(req_id)
