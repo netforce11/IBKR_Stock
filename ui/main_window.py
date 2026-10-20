@@ -34,6 +34,7 @@ from ui.panels.watchlist_panel import WatchlistPanel
 from ui.panels.settings_panel import SettingsPanel
 from ui.panels.market_journal_panel import MarketJournalPanel
 from ui.panels.scanner_panel import ScannerPanel
+from ui.panels.account_panel import AccountPanel
 from core.watchlist_manager import WatchlistManager
 from core.storage.scanner_storage import ScannerStorage
 from ui.status_bar_widget import HtsStatusBar
@@ -150,6 +151,7 @@ class MainWindow(QMainWindow):
         _panel_meta = [
             ("orderbook",    "호가창"),
             ("portfolio",    "포트폴리오"),
+            ("account",      "💰 계좌"),
             ("stock_chart",  "차트"),
             ("order",        "주문"),
             ("fill_history", "체결내역"),
@@ -419,6 +421,10 @@ class MainWindow(QMainWindow):
         self._pf_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._pf_panel, title="포트폴리오")
 
+        self._acct_panel = AccountPanel(self._bus)
+        self._acct_panel.set_shortcut_manager(self._shortcut_mgr)
+        self._layout_mgr.add(self._acct_panel, title="💰 계좌")
+
         self._order_panel = OrderPanel(self._cmd_queue, self._bus)
         self._order_panel.set_shortcut_manager(self._shortcut_mgr)
         self._layout_mgr.add(self._order_panel, title="주문")
@@ -526,8 +532,12 @@ class MainWindow(QMainWindow):
         right_w2 = mdi_w - right_x
         chart_w2 = right_w2 - order_w - 8
 
-        self._layout_mgr.place("order",        right_x,               0,               order_w, top_h)
-        self._layout_mgr.place("portfolio",    right_x+order_w+8,     0,               chart_w2, top_h)
+        acct_w = 300   # 계좌 패널 너비 (주문 패널 옆)
+        chart_w3 = right_w2 - order_w - acct_w - 16
+
+        self._layout_mgr.place("order",        right_x,                        0,        order_w,  top_h)
+        self._layout_mgr.place("account",      right_x + order_w + 8,          0,        acct_w,   top_h)
+        self._layout_mgr.place("portfolio",    right_x + order_w + acct_w + 16, 0,       chart_w3, top_h)
         self._layout_mgr.place("stock_chart",  right_x,               top_h+8,         right_w2, bot_h - fill_h - 8)
         self._layout_mgr.place("fill_history", right_x,               top_h+8+bot_h-fill_h, right_w2, fill_h)
 
