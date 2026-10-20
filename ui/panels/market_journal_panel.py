@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QLineEdit,
-    QFrame, QSplitter, QCheckBox, QMessageBox,
+    QFrame, QSplitter, QCheckBox, QMessageBox, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui  import QColor
