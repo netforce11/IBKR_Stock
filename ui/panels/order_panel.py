@@ -26,24 +26,40 @@ from shared.ui.panels.base_panel import BasePanel
 log = logging.getLogger(__name__)
 
 
-class _DblClickSelectFilter(QObject):
-    """더블클릭 시 스핀박스 전체 선택 이벤트 필터"""
+class _SpinBoxInputFilter(QObject):
+    """스핀박스 입력 편의 필터
+    - 싱글클릭  → 전체 선택
+    - Backspace → 값 0으로 초기화 (QDoubleSpinBox: minimum값, QSpinBox: 0)
+    """
     def __init__(self, target, parent=None):
         super().__init__(parent)
         self._target = target
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseButtonDblClick:
-            self._target.selectAll()
-            return True
+        if event.type() == QEvent.Type.MouseButtonPress:
+            # 클릭 후 Qt가 커서를 옮기기 전에 전체 선택
+            from PyQt6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._target.selectAll)
+            return False   # 이벤트는 계속 전파 (포커스·커서 정상 동작)
+        if event.type() == QEvent.Type.KeyPress:
+            from PyQt6.QtCore import Qt as _Qt
+            if event.key() == _Qt.Key.Key_Backspace:
+                # Backspace 한 번 → 값 전체 삭제 (minimum 또는 0)
+                widget = self._target
+                if isinstance(widget, QDoubleSpinBox):
+                    widget.setValue(widget.minimum())
+                elif isinstance(widget, QSpinBox):
+                    widget.setValue(0)
+                widget.selectAll()
+                return True   # 기본 Backspace 동작 차단
         return super().eventFilter(obj, event)
 
 
 def _install_select_all(widget) -> None:
-    """더블클릭 시 전체 선택 — QDoubleSpinBox / QSpinBox 공통"""
-    f = _DblClickSelectFilter(widget, widget)
+    """싱글클릭 전체 선택 + Backspace 초기화 — QDoubleSpinBox / QSpinBox 공통"""
+    f = _SpinBoxInputFilter(widget, widget)
     widget.installEventFilter(f)
-    widget._sel_all_filter = f   # GC 방지
+    widget._spin_input_filter = f   # GC 방지
 
 # ── 색상 상수 ────────────────────────────────────────────────
 _BG         = "#F5F5F5"
@@ -587,7 +603,7 @@ class OrderPanel(BasePanel):
         self._dca_status_lbl.setText(
             f"✅ {self._dca_count}회 매수 — {symbol} {qty}주 "
             f"@ {'시장가' if is_mkt else f'${price:.2f}'}")
-        log.info("DCA exec %d/%d: %s BUY %d @ %s",
+        log.debug("DCA exec %d/%d: %s BUY %d @ %s",
                  self._dca_count, total, symbol, qty, order_type)
 
     def _dca_start(self) -> None:
@@ -603,7 +619,7 @@ class OrderPanel(BasePanel):
         self._dca_progress_lbl.setText(f"진행: 0 / {self._dca_total.value()}")
         self._dca_status_lbl.setStyleSheet(_STS_RUN)
         self._dca_status_lbl.setText("▶ DCA 실행 중 — 첫 매수 대기...")
-        log.info("DCA started: interval=%dmin qty=%d total=%d",
+        log.debug("DCA started: interval=%dmin qty=%d total=%d",
                  self._dca_interval.value(), self._dca_qty.value(), self._dca_total.value())
 
     def _dca_stop(self, *, finished: bool = False) -> None:
@@ -618,7 +634,7 @@ class OrderPanel(BasePanel):
             self._dca_status_lbl.setStyleSheet(_STS_WAIT)
             self._dca_status_lbl.setText(
                 f"■ DCA 중지 ({self._dca_count}회 완료)")
-        log.info("DCA stopped: finished=%s count=%d", finished, self._dca_count)
+        log.debug("DCA stopped: finished=%s count=%d", finished, self._dca_count)
 
     # ════════════════════════════════════════════════════════
     # 이벤트 핸들러
@@ -728,7 +744,7 @@ class OrderPanel(BasePanel):
             "order_type": order_type,
         }
         self._cmd_queue.put(cmd)
-        log.info("Order sent: %s", cmd)
+        log.debug("Order sent: %s", cmd)
         side_kr = "매수" if side == "BUY" else "매도"
         self._show_status(
             f"✅ {side_kr} {symbol} {qty}주 @ "
@@ -778,7 +794,7 @@ class OrderPanel(BasePanel):
         self._show_status(
             f"✅ 소수점 {side_kr} {symbol} {qty}주 @ "
             f"{'시장가' if is_market else f'${price:.2f}'}")
-        log.info("Fractional order: %s", cmd)
+        log.debug("Fractional order: %s", cmd)
 
     def _cancel_all(self) -> None:
         self._cmd_queue.put({"action": "cancel_all"})

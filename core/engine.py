@@ -102,6 +102,7 @@ class TradingEngine:
                 "order_type": req.order_type,
             })
             self._bus.publish(Topics.order_status(order_id), {"status": "submitted"})
+            log.debug("Order placed: %s %s %s qty=%g", order_id, req.side, req.symbol, req.quantity)
         except Exception as e:
             log.exception("Broker place_order error")
             self._bus.publish(Topics.SYSTEM_ERROR, {"msg": str(e)})
