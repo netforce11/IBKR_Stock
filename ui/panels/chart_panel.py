@@ -292,10 +292,10 @@ class StockChartPanel(MinuteChartPanel):
         self._broker = broker
         self._indicators: dict[str, float] = {}
 
-        # 실시간 candle 구독
-        bus.subscribe("candle.tick",   self,
+        # 실시간 candle 구독 (Topics 정적 메서드 사용 — 문자열 하드코딩 금지)
+        bus.subscribe(Topics.CANDLE_TICK,   self,
                       lambda d: self._invoke_main("_on_tick_inv", d))
-        bus.subscribe("candle.closed", self,
+        bus.subscribe(Topics.CANDLE_CLOSED, self,
                       lambda d: self._invoke_main("_on_closed_inv", d))
 
         # 지표 구독
