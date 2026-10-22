@@ -19,6 +19,7 @@ from PyQt6.QtCore import Qt, pyqtSlot, QDate
 from PyQt6.QtGui import QColor
 
 from shared.core.bus import DataBus
+from shared.core.topics import Topics
 from shared.ui.panels.base_panel import BasePanel
 
 log = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class FillHistoryPanel(BasePanel):
         self._build_ui()
 
         # 실시간 체결 구독 (오늘 보기 중일 때만 _on_fill 실제 삽입)
-        bus.subscribe("order.filled", self,
+        bus.subscribe(Topics.ORDER_FILLED, self,
                       lambda d: self._invoke_main("_on_fill", d))
 
         # 시작 시 당일 내역 로드
@@ -257,7 +258,7 @@ class FillHistoryPanel(BasePanel):
         self._table.setItem(pos, 2, _item(
             "매수" if side == "BUY" else "매도", side_clr))
         self._table.setItem(pos, 3, _item(
-            f"{int(row.get('qty', 0)):,}", align=right))
+            f"{float(row.get('qty', 0)):g}", align=right))
         self._table.setItem(pos, 4, _item(
             f"${float(row.get('fill_price', 0)):,.2f}", align=right))
         self._table.setItem(pos, 5, _item(

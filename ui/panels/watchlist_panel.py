@@ -17,10 +17,12 @@ from typing import Dict, Optional
 from PyQt6.QtWidgets import (
     QTabWidget, QTabBar, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QPushButton, QLabel,
+    QLineEdit, QPushButton, QLabel, QToolButton,
     QMenu, QInputDialog, QMessageBox,
     QAbstractItemView, QSizePolicy, QCalendarWidget,
 )
+# QToolButton 별칭 (코너 위젯용)
+QToolButton_compat = QToolButton
 from PyQt6.QtCore import Qt, pyqtSlot, QPoint, QDate
 from PyQt6.QtGui import QFont, QColor, QAction, QPalette
 
@@ -239,7 +241,8 @@ class _GroupPage(QWidget):
     def highlight_symbol(self, symbol: str) -> None:
         """외부에서 현재 선택 종목 행 강조 요청"""
         for r in range(self._tbl.rowCount()):
-            if self._tbl.item(r, self.COL_SYM).text() == symbol.upper():
+            item = self._tbl.item(r, self.COL_SYM)
+            if item and item.text() == symbol.upper():
                 self._highlight_row(r)
                 return
 
@@ -270,8 +273,12 @@ class _GroupPage(QWidget):
             t1 = self._tbl.item(r1, col)
             t2 = self._tbl.item(r2, col)
             if t1 and t2:
-                t1.setText(t2.text()), t2.setText(t1.text())
-                t1.setForeground(t2.foreground()), t2.setForeground(t1.foreground())
+                text1, text2 = t1.text(), t2.text()
+                fg1, fg2     = t1.foreground(), t2.foreground()
+                bg1, bg2     = t1.background(), t2.background()
+                t1.setText(text2);       t2.setText(text1)
+                t1.setForeground(fg2);   t2.setForeground(fg1)
+                t1.setBackground(bg2);   t2.setBackground(bg1)
         # 캐시는 종목명 기반이라 swap 불필요
 
     # ── 입력창에서 추가 ─────────────────────────────────
@@ -588,12 +595,10 @@ class WatchlistPanel(BasePanel):
 
     # ── 패널 종료 시 구독 해제 ──────────────────────────
     def closeEvent(self, event) -> None:
-        self._bus.unsubscribe_all(self)
+        # super().closeEvent → BasePanel._cleanup() → unsubscribe_all(self) 호출
         super().closeEvent(event)
 
     def register_shortcuts(self) -> list:
         return []
 
 
-# PyQt6 QToolButton (코너 위젯용 경량 임포트)
-from PyQt6.QtWidgets import QToolButton as QToolButton_compat  # noqa: E402
