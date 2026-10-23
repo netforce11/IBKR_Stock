@@ -6,8 +6,9 @@
 #   - 조회 → 결과 테이블 (순위/종목/현재가/등락률/거래량/거래대금/시가총액)
 #   - 결과 자동 저장 (data/scanner/YYYYMMDD/HHMM_CODE.json)
 #   - 과거 파일 불러오기 (날짜 선택 → 파일 선택 → 로드)
-#   - 종목 더블클릭 → WATCHLIST_SELECT 발행 (호가창/차트 연동)
-#   - 종목 우클릭 → 관심종목 추가
+#   - 종목 클릭 → WATCHLIST_SELECT 발행 (호가창/차트 연동)
+#   - 종목 더블클릭 → 기업 정보 창 (시세/투자지표/회사 개요)
+#   - 종목 우클릭 → 관심종목 추가 / 기업 정보
 
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from PyQt6.QtGui import QColor, QFont
 from shared.core.bus import DataBus
 from shared.core.topics import Topics
 from shared.ui.panels.base_panel import BasePanel
+from ui.company_info_dialog import CompanyInfoDialog
 
 log = logging.getLogger(__name__)
 
@@ -117,15 +119,18 @@ class ScannerPanel(BasePanel):
         self._storage   = storage   # ScannerStorage 인스턴스
         self._req_id    = 9000      # 스캐너 전용 req_id 시작값
         self._last_result: dict = {}
+        self._rows: list = []                 # 테이블에 표시 중인 결과 행
+        self._info_dialogs: dict = {}         # symbol → 열린 기업 정보 창
 
         # 자동 조회 타이머
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._do_scan)
 
-        # 조회 버튼 타임아웃 복구 (응답 없을 경우 15초 후 버튼 재활성)
+        # 조회 버튼 타임아웃 복구 (응답 없을 경우 30초 후 버튼 재활성)
+        # 스캔 후 종목별 시세 보강(최대 50종목 ≈ 6초)까지 포함한 시간
         self._scan_timeout = QTimer(self)
         self._scan_timeout.setSingleShot(True)
-        self._scan_timeout.setInterval(15_000)
+        self._scan_timeout.setInterval(30_000)
         self._scan_timeout.timeout.connect(self._on_scan_timeout)
 
         self.setStyleSheet(
@@ -340,8 +345,9 @@ class ScannerPanel(BasePanel):
         for i, (_, width, _align) in enumerate(_COLS):
             self._table.setColumnWidth(i, width)
 
-        # 단일 클릭 → 호가창/차트 연동 (더블클릭 불필요)
+        # 단일 클릭 → 호가창/차트 연동, 더블클릭 → 기업 정보 창
         self._table.clicked.connect(self._on_row_click)
+        self._table.doubleClicked.connect(self._on_row_double_click)
         self._table.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(
@@ -395,8 +401,9 @@ class ScannerPanel(BasePanel):
         self._req_id += 1
         self._btn_scan.setEnabled(False)
         self._btn_scan.setText("조회 중...")
-        self._set_status(f"⏳ {scan_code} 조회 중... (req_id={self._req_id})")
-        self._scan_timeout.start()   # 15초 타임아웃 시작
+        self._set_status(
+            f"⏳ {scan_code} 조회 중... 종목별 시세 수집 포함 (req_id={self._req_id})")
+        self._scan_timeout.start()   # 30초 타임아웃 시작
         log.info("Scanner scan: req_id=%d code=%s filters=%s",
                  self._req_id, scan_code, filters)
         try:
@@ -430,7 +437,7 @@ class ScannerPanel(BasePanel):
 
         self._scan_timeout.stop()   # 타임아웃 취소
         self._last_result = data
-        self._render_table(results)
+        no_price = self._render_table(results)
 
         # 타이틀 업데이트
         label = next((lbl for lbl, c in SCAN_CODES if c == scan_code), scan_code)
@@ -449,6 +456,14 @@ class ScannerPanel(BasePanel):
                 f"✅ {len(results)}개 종목 저장 완료 → {path.name}")
             self._refresh_date_list()
 
+        if results and no_price == len(results):
+            self._set_status(
+                "⚠ 종목 목록만 수신 — 시세를 받지 못했습니다. "
+                "IBKR 시세 구독(또는 지연 시세 설정)을 확인하세요.")
+        elif no_price:
+            self._set_status(
+                self._status_lbl.text() + f"  (시세 미수신 {no_price}개)")
+
     @pyqtSlot(object)
     def _on_scanner_error(self, data: dict) -> None:
         msg = data.get("msg", "알 수 없는 오류")
@@ -456,36 +471,42 @@ class ScannerPanel(BasePanel):
         self._btn_scan.setText("조회")
         self._set_status(f"❌ 스캐너 오류: {msg}")
 
-    def _render_table(self, results: list) -> None:
+    def _render_table(self, results: list) -> int:
+        """결과 행 표시. 시세(현재가)를 받지 못한 행 수를 반환."""
+        self._rows = list(results)
         self._table.setRowCount(0)
         self._table.setRowCount(len(results))
 
         font_bold = QFont()
         font_bold.setBold(True)
 
+        def cell(text: str, align=Qt.AlignmentFlag.AlignRight,
+                 color: str | None = None, bold=False) -> QTableWidgetItem:
+            it = QTableWidgetItem(text)
+            it.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
+            if color:
+                it.setForeground(QColor(color))
+            if bold:
+                it.setFont(font_bold)
+            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            return it
+
+        no_price = 0
         for row, item in enumerate(results):
-            pct = item.get("change_pct", 0.0)
-            chg = item.get("change",     0.0)
-            color_str = "#C62828" if pct < 0 else "#1565C0" if pct > 0 else _TEXT
+            price   = item.get("price")      or 0.0
+            pct     = item.get("change_pct") or 0.0
+            chg     = item.get("change")     or 0.0
+            has_chg = bool(price and (item.get("prev_close") or pct))
+            color_str = ("#C62828" if pct < 0 else "#1565C0" if pct > 0
+                         else _TEXT)
 
-            def cell(text: str, align=Qt.AlignmentFlag.AlignRight,
-                     color: str | None = None, bold=False) -> QTableWidgetItem:
-                it = QTableWidgetItem(text)
-                it.setTextAlignment(
-                    align | Qt.AlignmentFlag.AlignVCenter)
-                if color:
-                    it.setForeground(QColor(color))
-                if bold:
-                    it.setFont(font_bold)
-                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                return it
+            vol     = item.get("volume")     or 0
+            avg_vol = item.get("avg_volume") or 0
+            mktcap  = item.get("market_cap") or 0
+            if not price:
+                no_price += 1
 
-            vol     = item.get("volume",    0)
-            avg_vol = item.get("avg_volume", 0)
-            mktcap  = item.get("market_cap", 0)
-            price   = item.get("price",      0.0)
-
-            vol_ratio = f"{vol/avg_vol:.1f}x" if avg_vol > 0 else "-"
+            vol_ratio = f"{vol/avg_vol:.1f}x" if vol and avg_vol else "-"
 
             self._table.setItem(row, 0, cell(str(item.get("rank", row+1)),
                                              Qt.AlignmentFlag.AlignCenter))
@@ -493,14 +514,18 @@ class ScannerPanel(BasePanel):
                             Qt.AlignmentFlag.AlignLeft, bold=True)
             sym_item.setData(Qt.ItemDataRole.UserRole,
                              item.get("symbol", ""))
+            if item.get("long_name"):
+                sym_item.setToolTip(item["long_name"])
             self._table.setItem(row, 1, sym_item)
-            self._table.setItem(row, 2, cell(f"${price:,.2f}"))
+            self._table.setItem(row, 2, cell(
+                f"${price:,.2f}" if price else "-"))
             self._table.setItem(row, 3, cell(
-                f"{'+' if chg>=0 else ''}{chg:.2f}", color=color_str))
+                f"{'+' if chg>=0 else ''}{chg:.2f}" if has_chg else "-",
+                color=color_str))
             self._table.setItem(row, 4, cell(
-                f"{'+' if pct>=0 else ''}{pct:.2f}%",
+                f"{'+' if pct>=0 else ''}{pct:.2f}%" if has_chg else "-",
                 color=color_str, bold=True))
-            self._table.setItem(row, 5, cell(_fmt_vol(vol)))
+            self._table.setItem(row, 5, cell(_fmt_vol(vol) if vol else "-"))
             self._table.setItem(row, 6, cell(vol_ratio))
             self._table.setItem(row, 7, cell(
                 _fmt_cap(mktcap) if mktcap else "-"))
@@ -508,6 +533,8 @@ class ScannerPanel(BasePanel):
                 item.get("exchange", ""), Qt.AlignmentFlag.AlignCenter))
 
             self._table.setRowHeight(row, 24)
+
+        return no_price
 
     # ════════════════════════════════════════════════════════
     # 저장 / 불러오기
@@ -586,6 +613,32 @@ class ScannerPanel(BasePanel):
             self._bus.publish(Topics.WATCHLIST_SELECT, {"symbol": sym})
             self._set_status(f"📌 {sym} → 전 패널 전환")
 
+    def _on_row_double_click(self, index) -> None:
+        """더블클릭 → 기업 정보 창"""
+        self._open_company_info(index.row())
+
+    def _open_company_info(self, row: int) -> None:
+        sym = self._get_symbol_at(row)
+        if not sym:
+            return
+        # 이미 열린 창이면 앞으로 가져오기
+        dlg = self._info_dialogs.get(sym)
+        if dlg is not None:
+            try:
+                dlg.raise_()
+                dlg.activateWindow()
+                return
+            except RuntimeError:
+                self._info_dialogs.pop(sym, None)
+        data = next((r for r in self._rows if r.get("symbol") == sym),
+                    {"symbol": sym})
+        dlg = CompanyInfoDialog(data, self._broker, self)
+        dlg.destroyed.connect(
+            lambda _=None, s=sym: self._info_dialogs.pop(s, None))
+        self._info_dialogs[sym] = dlg
+        dlg.show()
+        self._set_status(f"ℹ {sym} 기업 정보 조회")
+
     def _on_context_menu(self, pos: QPoint) -> None:
         row = self._table.rowAt(pos.y())
         if row < 0:
@@ -601,12 +654,15 @@ class ScannerPanel(BasePanel):
 
         act_chart = menu.addAction(f"📈 {sym} 차트 보기")
         act_order = menu.addAction(f"💹 {sym} 주문창 전환")
+        act_info  = menu.addAction(f"ℹ {sym} 기업 정보")
         menu.addSeparator()
         act_watch = menu.addAction(f"★ {sym} 관심종목 추가")
 
         action = menu.exec(self._table.viewport().mapToGlobal(pos))
         if action in (act_chart, act_order):
             self._bus.publish(Topics.WATCHLIST_SELECT, {"symbol": sym})
+        elif action == act_info:
+            self._open_company_info(row)
         elif action == act_watch:
             self._cmd_queue.put({"action": "add_watchlist", "symbol": sym})
             self._set_status(f"★ {sym} 관심종목 추가 요청")

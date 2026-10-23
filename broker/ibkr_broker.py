@@ -118,6 +118,15 @@ if IBAPI_OK:
             # 무시해도 되는 정보성 코드
             _INFO = {2100, 2103, 2104, 2105, 2106, 2107,
                      2108, 2109, 2119, 2158, 2168, 300, 10167, 101}
+            # 스캐너 보강용 시세 / 계약정보 요청 오류 → 메인 스레드에서 해당 요청 종료 처리
+            if (req_id in self._b._enrich_req
+                    or req_id in self._b._cd_callbacks):
+                log.debug("[IBKR] [%d] req=%d (보조 요청): %s",
+                          error_code, req_id, error_string)
+                if error_code not in (2104, 2106, 2158, 10167):
+                    self._b._tick_queue.put_nowait(
+                        ("req_error", req_id, error_code, error_string))
+                return
             if error_code in _INFO:
                 return
             log.error("[IBKR] [%d] req=%d: %s", error_code, req_id, error_string)
@@ -137,6 +146,20 @@ if IBAPI_OK:
         def tickSize(self, req_id: int, tick_type: int, size: int) -> None:
             self._b._tick_queue.put_nowait(
                 ("tick_size", req_id, tick_type, size))
+
+        def tickString(self, req_id: int, tick_type: int, value: str) -> None:
+            # 47 = Fundamental Ratios (generic tick 258) — 스캐너 보강용만 처리
+            if tick_type == 47:
+                self._b._tick_queue.put_nowait(
+                    ("tick_string", req_id, tick_type, value))
+
+        # ── 계약 상세 (기업 정보 창) ─────────────────────────
+        def contractDetails(self, req_id: int, contract_details: Any) -> None:
+            self._b._tick_queue.put_nowait(
+                ("contract_details", req_id, contract_details))
+
+        def contractDetailsEnd(self, req_id: int) -> None:
+            self._b._tick_queue.put_nowait(("contract_details_end", req_id))
 
         # ── 주문/체결 콜백 ────────────────────────────────────
         def orderStatus(self, order_id: int, status: str, filled: float,
@@ -252,6 +275,14 @@ class IBKRBroker(BaseBroker):
 
         # 스캐너 요청 임시 버퍼: req_id → {scan_code, rows[]}
         self._scanner_buf: Dict[int, dict] = {}
+
+        # 스캐너 결과 보강(시세/지표) 작업: scan req_id → job dict
+        self._enrich_jobs: Dict[int, dict] = {}
+        # 보강용 reqMktData req_id → (scan req_id, row index)
+        self._enrich_req: Dict[int, tuple] = {}
+
+        # 계약 상세 요청: req_id → [callback, details[]]
+        self._cd_callbacks: Dict[int, list] = {}
 
     # ── BaseBroker 인터페이스 ────────────────────────────────
     def connect(self) -> None:
@@ -476,10 +507,29 @@ class IBKRBroker(BaseBroker):
             try:
                 if kind == "tick_price":
                     _, req_id, tick_type, price = item
-                    self._on_tick_price(req_id, tick_type, price)
+                    if req_id in self._enrich_req:
+                        self._on_enrich_price(req_id, tick_type, price)
+                    else:
+                        self._on_tick_price(req_id, tick_type, price)
                 elif kind == "tick_size":
                     _, req_id, tick_type, size = item
-                    self._on_tick_size(req_id, tick_type, size)
+                    if req_id in self._enrich_req:
+                        self._on_enrich_size(req_id, tick_type, size)
+                    else:
+                        self._on_tick_size(req_id, tick_type, size)
+                elif kind == "tick_string":
+                    _, req_id, tick_type, value = item
+                    if req_id in self._enrich_req:
+                        self._on_enrich_string(req_id, tick_type, value)
+                elif kind == "contract_details":
+                    _, req_id, cd = item
+                    self._on_contract_details(req_id, cd)
+                elif kind == "contract_details_end":
+                    _, req_id = item
+                    self._on_contract_details_end(req_id)
+                elif kind == "req_error":
+                    _, req_id, code, msg = item
+                    self._on_aux_req_error(req_id, code, msg)
                 elif kind == "order_status":
                     _, order_id, status, filled, avg_price = item
                     self._on_order_status(order_id, status, filled, avg_price)
@@ -528,6 +578,13 @@ class IBKRBroker(BaseBroker):
                     self._on_scanner_end(req_id)
             except Exception:
                 log.exception("drain_tick_queue 처리 오류: %s", item)
+
+        # 스캐너 보강 작업 진행 (웨이브 마감 / 다음 웨이브 / 결과 발행)
+        if self._enrich_jobs:
+            try:
+                self._check_enrich_jobs()
+            except Exception:
+                log.exception("스캐너 보강 작업 처리 오류")
 
     # ── IBKR 콜백 핸들러 ────────────────────────────────────
     def _on_tick_price(self, req_id: int,
@@ -794,7 +851,8 @@ class IBKRBroker(BaseBroker):
         if mktcap_b:
             sub.marketCapBelow = float(mktcap_b)
 
-        self._scanner_buf[req_id] = {"scan_code": scan_code, "rows": []}
+        self._scanner_buf[req_id] = {"scan_code": scan_code, "rows": [],
+                                     "contracts": [], "fallback": []}
         self._ib.reqScannerSubscription(req_id, sub, [], [])
         log.info("Scanner request: req_id=%d scan_code=%s", req_id, scan_code)
 
@@ -807,46 +865,325 @@ class IBKRBroker(BaseBroker):
                         contract_details: Any,
                         distance: str = "", benchmark: str = "",
                         projection: str = "", legs_str: str = "") -> None:
-        if req_id not in self._scanner_buf:
+        """
+        스캐너 1행 수신.
+        IBKR scannerData 는 종목/순위만 주고 가격·등락률·거래량은 주지 않는다.
+        (distance/benchmark/projection 은 대부분 빈 문자열)
+        → 여기서는 종목만 모으고, scanner_end 후 reqMktData 로 시세를 보강한다.
+        """
+        buf = self._scanner_buf.get(req_id)
+        if buf is None:
             return
         c = contract_details.contract
+        # 스캐너 구독은 scannerDataEnd 후에도 갱신 행을 다시 보내므로 중복 제거
+        if any(r["symbol"] == c.symbol for r in buf["rows"]):
+            return
 
-        # TWS 스캐너는 price/change 를 distance/benchmark 필드로 전달
-        # distance  = 현재가 문자열 (예: "125.43")
-        # benchmark = 등락률 또는 등락액 (예: "2.35")
         def _f(s: str) -> float:
             try:
                 return float(s) if s else 0.0
             except (ValueError, TypeError):
                 return 0.0
 
-        price      = _f(distance)
-        change_pct = _f(benchmark)
-        change     = round(price * change_pct / 100, 2) if price else 0.0
-
-        self._scanner_buf[req_id]["rows"].append({
+        buf["rows"].append({
             "rank":       rank + 1,
             "symbol":     c.symbol,
-            "exchange":   c.primaryExch or c.exchange,
+            "con_id":     getattr(c, "conId", 0) or 0,
+            "long_name":  getattr(contract_details, "longName", "") or "",
+            "exchange":   (getattr(c, "primaryExchange", "")
+                           or getattr(c, "primaryExch", "") or c.exchange),
             "currency":   c.currency,
-            "price":      price,
-            "change":     change,
-            "change_pct": change_pct,
+            "price":      0.0,
+            "prev_close": 0.0,
+            "change":     0.0,
+            "change_pct": 0.0,
             "volume":     0,
             "avg_volume": 0,
             "market_cap": 0,
+            "fundamentals": {},
         })
+        buf["contracts"].append(c)
+        # 일부 스캔 코드는 distance 에 값이 들어옴 — 시세 보강 실패 시 대체값
+        buf["fallback"].append((_f(distance), _f(benchmark)))
 
     def _on_scanner_end(self, req_id: int) -> None:
         buf = self._scanner_buf.pop(req_id, None)
+        # 스냅샷만 필요 — 구독을 해제하지 않으면 TWS 스캐너 구독이 계속 누적됨
+        if self._ib:
+            try:
+                self._ib.cancelScannerSubscription(req_id)
+            except Exception:
+                pass
         if not buf:
             return
-        import time
+        rows = buf["rows"]
+        log.info("Scanner rows: req_id=%d rows=%d — 시세 보강 시작",
+                 req_id, len(rows))
+        if not rows or not self._connected or not self._ib:
+            self._publish_scanner_result(req_id, buf["scan_code"], rows)
+            return
+
+        self._enrich_jobs[req_id] = {
+            "scan_code": buf["scan_code"],
+            "rows":      rows,
+            "contracts": buf["contracts"],
+            "fallback":  buf["fallback"],
+            "raw":       [dict() for _ in rows],
+            "pending":   list(range(len(rows))),
+            "active":    {},          # mkt req_id → row index
+            "wave_end":  0.0,
+        }
+        self._start_enrich_wave(req_id)
+
+    def _publish_scanner_result(self, req_id: int, scan_code: str,
+                                rows: list) -> None:
         self._bus.publish(Topics.SCANNER_RESULT, {
             "req_id":    req_id,
-            "scan_code": buf["scan_code"],
-            "results":   buf["rows"],
+            "scan_code": scan_code,
+            "results":   rows,
             "ts":        time.time(),
         })
-        log.info("Scanner result: req_id=%d rows=%d",
-                 req_id, len(buf["rows"]))
+        log.info("Scanner result: req_id=%d rows=%d", req_id, len(rows))
+
+    # ── 스캐너 결과 시세 보강 ───────────────────────────────
+    # 시세 라인 한도(기본 100) 보호 — 한 번에 최대 _ENRICH_BATCH 종목씩 요청
+    _ENRICH_BATCH   = 25
+    _ENRICH_WAVE_S  = 3.0     # 웨이브당 최대 대기 시간(초)
+    # tickSize 의 거래량 단위. TWS API 10.x 이상은 주(share) 단위.
+    # 구버전(9.x)에서 100주 단위로 들어오면 100 으로 변경.
+    _VOLUME_MULT    = 1
+
+    # tick type → raw 키 (실시간 / 지연 시세 모두)
+    _ENRICH_PRICE_TICKS = {
+        4: "last", 68: "last",
+        9: "close", 75: "close",
+        14: "open", 76: "open",
+        6: "high", 72: "high",
+        7: "low", 73: "low",
+        1: "bid", 66: "bid",
+        2: "ask", 67: "ask",
+    }
+    _ENRICH_SIZE_TICKS = {8: "volume", 74: "volume", 21: "avg_volume"}
+
+    # Fundamental Ratios(tick 47) 키 → 결과 필드
+    _RATIO_KEYS = {
+        "MKTCAP":     "market_cap_m",   # 백만 USD
+        "PEEXCLXOR":  "pe",
+        "TTMEPSXCLX": "eps",
+        "PRICE2BK":   "pbr",
+        "YIELD":      "div_yield",
+        "TTMDIVSHR":  "div_per_share",
+        "BETA":       "beta",
+        "TTMROEPCT":  "roe",
+        "NHIG":       "high_52w",
+        "NLOW":       "low_52w",
+        "TTMREV":     "revenue_ttm_m",  # 백만 USD
+        "TTMNPMGN":   "net_margin",
+        "QTOTD2EQ":   "debt_to_equity",
+    }
+
+    def _start_enrich_wave(self, scan_id: int) -> None:
+        job = self._enrich_jobs.get(scan_id)
+        if not job:
+            return
+        batch = job["pending"][:self._ENRICH_BATCH]
+        job["pending"] = job["pending"][self._ENRICH_BATCH:]
+        for idx in batch:
+            c = job["contracts"][idx]
+            if not c.exchange:
+                c.exchange = "SMART"
+            with self._lock:
+                rid = self._next_req_id
+                self._next_req_id += 1
+            self._enrich_req[rid] = (scan_id, idx)
+            job["active"][rid] = idx
+            try:
+                # 165 = 평균거래량(tick 21), 258 = 펀더멘털 비율(tick 47)
+                self._ib.reqMktData(rid, c, "165,258", False, False, [])
+            except Exception:
+                log.exception("보강 시세 요청 실패: %s", c.symbol)
+                self._enrich_req.pop(rid, None)
+                job["active"].pop(rid, None)
+        job["wave_end"] = time.time() + self._ENRICH_WAVE_S
+
+    def _enrich_raw(self, rid: int) -> Optional[dict]:
+        ref = self._enrich_req.get(rid)
+        if not ref:
+            return None
+        job = self._enrich_jobs.get(ref[0])
+        return job["raw"][ref[1]] if job else None
+
+    def _on_enrich_price(self, rid: int, tick_type: int, price: float) -> None:
+        key = self._ENRICH_PRICE_TICKS.get(tick_type)
+        raw = self._enrich_raw(rid)
+        if key and raw is not None and price and price > 0:
+            raw[key] = float(price)
+
+    def _on_enrich_size(self, rid: int, tick_type: int, size: Any) -> None:
+        key = self._ENRICH_SIZE_TICKS.get(tick_type)
+        raw = self._enrich_raw(rid)
+        if key and raw is not None:
+            try:
+                v = float(size)
+            except (ValueError, TypeError):
+                return
+            if v > 0:
+                raw[key] = v * self._VOLUME_MULT
+
+    def _on_enrich_string(self, rid: int, tick_type: int, value: str) -> None:
+        raw = self._enrich_raw(rid)
+        if raw is None or tick_type != 47 or not value:
+            return
+        ratios = {}
+        for part in value.split(";"):
+            if "=" not in part:
+                continue
+            k, v = part.split("=", 1)
+            field = self._RATIO_KEYS.get(k.strip())
+            if not field:
+                continue
+            try:
+                ratios[field] = float(v)
+            except (ValueError, TypeError):
+                pass
+        raw["ratios"] = ratios
+
+    @staticmethod
+    def _enrich_complete(raw: dict) -> bool:
+        if raw.get("failed"):
+            return True
+        return (bool(raw.get("last") or raw.get("close"))
+                and "close" in raw and "volume" in raw
+                and "avg_volume" in raw and "ratios" in raw)
+
+    def _check_enrich_jobs(self) -> None:
+        now = time.time()
+        for scan_id in list(self._enrich_jobs):
+            job = self._enrich_jobs[scan_id]
+            active = job["active"]
+            if active:
+                done = all(self._enrich_complete(job["raw"][i])
+                           for i in active.values())
+                if not done and now < job["wave_end"]:
+                    continue
+                # 웨이브 종료 → 시세 구독 해제
+                for rid in list(active):
+                    try:
+                        self._ib.cancelMktData(rid)
+                    except Exception:
+                        pass
+                    self._enrich_req.pop(rid, None)
+                active.clear()
+            if job["pending"] and self._connected and self._ib:
+                self._start_enrich_wave(scan_id)
+                continue
+            # 전체 완료 → 행 계산 후 결과 발행
+            self._finalize_enrich(job)
+            del self._enrich_jobs[scan_id]
+            self._publish_scanner_result(scan_id, job["scan_code"], job["rows"])
+
+    def _finalize_enrich(self, job: dict) -> None:
+        got = 0
+        for idx, row in enumerate(job["rows"]):
+            raw = job["raw"][idx]
+            last  = raw.get("last", 0.0)
+            close = raw.get("close", 0.0)      # tick 9 = 전일 종가
+            price = last or close
+            if price:
+                got += 1
+                row["price"]      = round(price, 4)
+                row["prev_close"] = close
+                if close:
+                    row["change"]     = round(price - close, 4)
+                    row["change_pct"] = round((price - close) / close * 100, 2)
+            else:
+                # 시세 미수신(시세 권한 없음 등) → 스캐너 제공값으로 대체
+                fb_price, fb_pct = job["fallback"][idx]
+                if fb_price:
+                    row["price"]      = fb_price
+                    row["change_pct"] = fb_pct
+                    row["change"]     = round(fb_price * fb_pct / 100, 2)
+            for k in ("open", "high", "low"):
+                if raw.get(k):
+                    row[k] = raw[k]
+            row["volume"]     = int(raw.get("volume", 0))
+            row["avg_volume"] = int(raw.get("avg_volume", 0))
+            ratios = dict(raw.get("ratios", {}))
+            mcap_m = ratios.pop("market_cap_m", 0.0)
+            if mcap_m:
+                row["market_cap"] = mcap_m * 1e6
+            row["fundamentals"] = ratios
+        log.info("Scanner 보강 완료: 시세 수신 %d / %d", got, len(job["rows"]))
+
+    # ── 계약 상세 (기업 정보) ───────────────────────────────
+    def request_contract_details(self, symbol: str, callback,
+                                 con_id: int = 0) -> bool:
+        """
+        종목 계약 상세 조회 (회사명, 업종 분류, 거래소 등).
+        callback(details: dict | None, error: str) 가 Qt 메인 스레드에서 호출된다.
+        """
+        if not self._connected or not self._ib:
+            return False
+        c = _make_stk_contract(symbol)
+        if con_id:
+            c.conId = int(con_id)
+        with self._lock:
+            rid = self._next_req_id
+            self._next_req_id += 1
+        self._cd_callbacks[rid] = [callback, []]
+        self._ib.reqContractDetails(rid, c)
+        return True
+
+    def _on_contract_details(self, rid: int, cd: Any) -> None:
+        entry = self._cd_callbacks.get(rid)
+        if entry is not None:
+            entry[1].append(cd)
+
+    def _on_contract_details_end(self, rid: int) -> None:
+        entry = self._cd_callbacks.pop(rid, None)
+        if not entry:
+            return
+        callback, details = entry
+        if not details:
+            self._safe_cb(callback, None, "계약 정보 없음")
+            return
+        # 여러 개면 미국 주식(SMART/USD) 우선
+        cd = next((d for d in details
+                   if d.contract.currency == "USD"), details[0])
+        c = cd.contract
+        info = {
+            "symbol":           c.symbol,
+            "con_id":           c.conId,
+            "long_name":        getattr(cd, "longName", ""),
+            "industry":         getattr(cd, "industry", ""),
+            "category":         getattr(cd, "category", ""),
+            "subcategory":      getattr(cd, "subcategory", ""),
+            "stock_type":       getattr(cd, "stockType", ""),
+            "primary_exchange": c.primaryExchange,
+            "currency":         c.currency,
+            "time_zone":        getattr(cd, "timeZoneId", ""),
+            "min_tick":         getattr(cd, "minTick", 0.0),
+            "liquid_hours":     getattr(cd, "liquidHours", ""),
+        }
+        self._safe_cb(callback, info, "")
+
+    def _on_aux_req_error(self, rid: int, code: int, msg: str) -> None:
+        if rid in self._enrich_req:
+            # 시세 권한 없음 / 계약 없음 / 시세 라인 초과 → 해당 종목은 대기 종료
+            if code in (101, 200, 354, 10089, 10090, 10091, 10168, 10197):
+                raw = self._enrich_raw(rid)
+                if raw is not None:
+                    raw["failed"] = True
+                    raw["error"] = f"[{code}] {msg}"
+        elif rid in self._cd_callbacks:
+            callback, _ = self._cd_callbacks.pop(rid)
+            self._safe_cb(callback, None, f"[{code}] {msg}")
+
+    @staticmethod
+    def _safe_cb(callback, *args) -> None:
+        try:
+            callback(*args)
+        except RuntimeError:
+            pass   # 콜백 대상 위젯이 이미 닫힘
+        except Exception:
+            log.exception("contract details callback 오류")
