@@ -319,6 +319,9 @@ class StockChartPanel(MinuteChartPanel):
         self._broker = broker
         self._indicators: dict[str, float] = {}
 
+        # 가격/거래량 Y축을 오른쪽으로 이동
+        self._move_y_axis_right()
+
         # 실시간 candle 구독 (Topics 정적 메서드 사용 — 문자열 하드코딩 금지)
         bus.subscribe(Topics.CANDLE_TICK,   self,
                       lambda d: self._invoke_main("_on_tick_inv", d))
@@ -374,6 +377,33 @@ class StockChartPanel(MinuteChartPanel):
         self._update_indicator_subs(symbol, old)
         if hasattr(self, "_clock"):          # __init__ 완료 후에만
             self._subscribe_price(self._symbol)
+
+    # ── Y축 오른쪽 배치 ──────────────────────────────────────
+    _Y_AXIS_WIDTH = 70   # 가격·거래량 축 폭을 같게 맞춰 두 차트 x 정렬 유지
+
+    def _move_y_axis_right(self) -> None:
+        for name, label in (("_p1", "가격"), ("_p2", "거래량")):
+            pl = getattr(self, name, None)
+            if pl is None:
+                continue
+            pl.hideAxis("left")
+            pl.showAxis("right")
+            pl.setLabel("right", label)
+            pl.getAxis("right").setWidth(self._Y_AXIS_WIDTH)
+        self.apply_theme()
+
+    def apply_theme(self, bg: str = "#FFF5F7", fg: str = "#1E293B",
+                    border: str = "#E8C8D0") -> None:
+        super().apply_theme(bg, fg, border)
+        for name in ("_p1", "_p2"):
+            pl = getattr(self, name, None)
+            if pl is None:
+                continue
+            try:
+                pl.getAxis("right").setTextPen(fg)
+                pl.getAxis("right").setPen(border)
+            except Exception:
+                pass
 
     # ── 1분봉 버튼: 이미 1분봉이면 다시 불러오기 ────────────────
     def _set_chart_mode(self, mode: str) -> None:
