@@ -33,13 +33,15 @@ from shared.core.topics import Topics
 log = logging.getLogger(__name__)
 
 # ── 색상 ────────────────────────────────────────────────
-_C_OK      = "#22C55E"   # 연결 (녹색)
-_C_WARN    = "#F59E0B"   # 경고 (황색)
-_C_ERR     = "#EF4444"   # 오류/단절 (빨강)
-_C_MOCK    = "#A78BFA"   # Mock 모드 (보라)
-_C_DIM     = "#9CA3AF"   # 비활성 텍스트
-_C_TEXT    = "#F9FAFB"   # 밝은 텍스트 (다크 상태바용)
-_C_BG      = "#1E293B"   # 위젯 배경
+# 밝은 상태바용 팔레트 (배경 #E8ECF0 위에서 WCAG 대비 확보)
+_C_OK      = "#15803D"   # 연결 (녹색)
+_C_WARN    = "#B45309"   # 경고 (황색)
+_C_ERR     = "#B91C1C"   # 오류/단절 (빨강)
+_C_MOCK    = "#6D28D9"   # Mock 모드 (보라)
+_C_DIM     = "#64748B"   # 비활성 텍스트
+_C_TEXT    = "#1F2937"   # 기본 텍스트
+_C_BG      = "#E8ECF0"   # 위젯 배경
+_C_SEP     = "#CBD5E1"   # 구분선
 
 _LED_QSS = (
     "QLabel {{ min-width:10px; max-width:10px;"
@@ -57,7 +59,7 @@ def _lbl(text: str, color: str = _C_TEXT) -> QLabel:
 
 def _sep() -> QLabel:
     s = QLabel("│")
-    s.setStyleSheet(f"color:#334155; font-size:12px;")
+    s.setStyleSheet(f"color:{_C_SEP}; font-size:12px;")
     return s
 
 
@@ -72,6 +74,7 @@ class ConnectionWidget(QWidget):
 
         self._led = QLabel()
         self._led.setFixedSize(10, 10)
+        self.state = "mock"
         self._txt = QLabel("Mock")
         self._txt.setStyleSheet(_LBL_QSS.format(color=_C_MOCK))
 
@@ -81,6 +84,7 @@ class ConnectionWidget(QWidget):
 
     def _set_state(self, state: str, name: str = "") -> None:
         """state: 'mock' | 'connected' | 'disconnected' | 'kill'"""
+        self.state = state
         if state == "mock":
             color, text = _C_MOCK, "⬤ Mock"
         elif state == "connected":
@@ -91,8 +95,8 @@ class ConnectionWidget(QWidget):
             color, text = _C_ERR, "⬤ 단절"
 
         self._led.setStyleSheet(
-            f"background:{color}; border-radius:5px; min-width:10px; max-width:10px;"
-            f" min-height:10px; max-height:10px;")
+            f"QLabel {{ background:{color}; border:none; border-radius:5px;"
+            f" min-width:10px; max-width:10px; min-height:10px; max-height:10px; }}")
         self._txt.setText(text)
         self._txt.setStyleSheet(_LBL_QSS.format(color=color))
 
@@ -150,19 +154,19 @@ def _get_market_session() -> tuple[str, str, str]:
     now_et = datetime.now(ET)
     # 주말 체크
     if now_et.weekday() >= 5:
-        return ("주말 휴장", "🔴", "#EF4444")
+        return ("주말 휴장", "🔴", _C_ERR)
     h, m = now_et.hour, now_et.minute
     mins = h * 60 + m
     if mins < 4 * 60:           # 00:00 ~ 04:00
-        return ("장 마감", "🔴", "#EF4444")
+        return ("장 마감", "🔴", _C_ERR)
     elif mins < 9 * 60 + 30:    # 04:00 ~ 09:30
-        return ("프리마켓", "🟡", "#F59E0B")
+        return ("프리마켓", "🟡", _C_WARN)
     elif mins < 16 * 60:        # 09:30 ~ 16:00
-        return ("정규장", "🟢", "#22C55E")
+        return ("정규장", "🟢", _C_OK)
     elif mins < 20 * 60:        # 16:00 ~ 20:00
-        return ("애프터마켓", "🟠", "#F97316")
+        return ("애프터마켓", "🟠", "#C2410C")
     else:                        # 20:00 ~
-        return ("장 마감", "🔴", "#EF4444")
+        return ("장 마감", "🔴", _C_ERR)
 
 
 class MarketSessionWidget(QWidget):
@@ -227,8 +231,8 @@ class SubscriptionWidget(QWidget):
         if snap.get("limit_hit"):
             text += " ⚠한도"
         ratio = total / max_ if max_ else 0.0
-        color = "#F85149" if (ratio >= 1.0 or snap.get("limit_hit")) else \
-                "#D29922" if ratio >= 0.8 else (_C_OK if total > 0 else _C_DIM)
+        color = _C_ERR if (ratio >= 1.0 or snap.get("limit_hit")) else \
+                _C_WARN if ratio >= 0.8 else (_C_OK if total > 0 else _C_DIM)
         self._count = total
         self._val.setText(text)
         self._val.setStyleSheet(_LBL_QSS.format(color=color))
@@ -248,10 +252,13 @@ class HtsStatusBar:
     """
 
     def __init__(self, status_bar: QStatusBar, bus: DataBus,
-                 feed=None) -> None:
+                 feed=None, broker_getter=None) -> None:
         self._bar  = status_bar
         self._bus  = bus
         self._feed = feed   # IBKRFeed — 구독 수 조회용
+        # 현재 브로커를 돌려주는 함수 — 연결 이벤트(BROKER_CONNECTED)는 이 위젯이 만들어지기
+        # 전에 이미 발행돼 놓치므로, 실제 브로커 상태를 직접 읽어 표시한다.
+        self._broker_getter = broker_getter
 
         # ── 위젯 생성 ─────────────────────────────────
         self._market  = MarketSessionWidget()
@@ -259,9 +266,17 @@ class HtsStatusBar:
         self._subs    = SubscriptionWidget()
         self._lat     = LatencyWidget()
 
-        # 상태바 배경 (다크)
+        # 상태바 배경 (밝게). 반드시 objectName 선택자로 지정 — 선택자 없이 지정하면 자식 QLabel
+        # 하나하나에도 배경/왼쪽 테두리가 적용돼 칸이 쪼개져 보인다.
+        self._bar.setStyleSheet(
+            f"QStatusBar {{ background:{_C_BG}; color:{_C_TEXT}; }}"
+            "QStatusBar::item { border:none; }")
         for w in (self._market, self._conn, self._subs, self._lat):
-            w.setStyleSheet(f"background:{_C_BG}; border-left:1px solid #334155;")
+            w.setObjectName("hts_sb_item")
+            w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            w.setStyleSheet(
+                f"QWidget#hts_sb_item {{ background:{_C_BG}; border:none;"
+                f" border-left:1px solid {_C_SEP}; }}")
 
         # 우측에서부터 영구 위젯 등록 (addPermanentWidget은 우측 정렬)
         self._bar.addPermanentWidget(self._market)
@@ -285,7 +300,30 @@ class HtsStatusBar:
         # 구독 수 갱신 타이머 (1초마다)
         self._timer = QTimer()
         self._timer.timeout.connect(self._refresh_subs)
+        self._timer.timeout.connect(self._sync_connection)
         self._timer.start(1000)
+        self._sync_connection()      # 생성 시점의 실제 연결 상태 즉시 반영
+        self._refresh_subs()
+
+    def _sync_connection(self) -> None:
+        """실제 브로커 객체 기준으로 접속 표시 갱신 (이벤트를 놓쳐도 1초 안에 바로잡힘)."""
+        if self._broker_getter is None or self._conn.state == "kill":
+            return
+        try:
+            b = self._broker_getter()
+        except Exception:
+            return
+        if b is None:
+            return
+        name = type(b).__name__
+        if "Mock" in name:
+            want, label = "mock", ""
+        elif getattr(b, "_connected", False):
+            want, label = "connected", "IBKR"
+        else:
+            want, label = "disconnected", ""
+        if want != self._conn.state:
+            self._conn._set_state(want, label)
 
     def _on_connected(self, data: dict) -> None:
         broker = data.get("broker", "") if isinstance(data, dict) else ""
@@ -321,5 +359,5 @@ class HtsStatusBar:
 
 def _sep_widget() -> QLabel:
     s = QLabel("│")
-    s.setStyleSheet(f"color:#334155; font-size:14px; background:{_C_BG};")
+    s.setStyleSheet(f"color:{_C_SEP}; font-size:14px; background:{_C_BG};")
     return s

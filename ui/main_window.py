@@ -481,7 +481,9 @@ class MainWindow(QMainWindow):
         self._load_favorites()
 
         # 우측 상태바 위젯 (연결 상태 / 구독 수 / 레이턴시)
-        self._hts_status = HtsStatusBar(self._status_bar, self._bus, self._feed)
+        self._hts_status = HtsStatusBar(
+            self._status_bar, self._bus, self._feed,
+            broker_getter=lambda: getattr(self, "_broker", None))
 
         self._status_bar.showMessage("준비")
 
