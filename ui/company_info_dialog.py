@@ -330,7 +330,7 @@ class CompanyInfoDialog(QDialog):
 
     def _on_ibkr(self, info, err: str) -> None:
         if not info:
-            log.info("계약 상세 조회 실패 %s: %s", self._symbol, err)
+            log.debug("계약 상세 조회 실패 %s: %s", self._symbol, err)
             return
         if info.get("long_name"):
             self._lbl_name.setText(info["long_name"])

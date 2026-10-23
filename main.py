@@ -16,12 +16,15 @@ from config.settings import LOG_DIR
 def _setup_logging() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 파일: DEBUG 전부 기록 / 콘솔: INFO 이상만 출력
+    # 파일: DEBUG 전부 기록 / 콘솔: WARNING 이상만 출력 (콘솔 과부하 방지)
+    #   콘솔에 INFO 까지 보고 싶으면:  IBKR_CONSOLE_LOG=INFO python main.py
     file_handler = logging.FileHandler(LOG_DIR / "app.log", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
 
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    # console_handler.setLevel(logging.INFO)
+    _console_level = os.environ.get("IBKR_CONSOLE_LOG", "WARNING").upper()
+    console_handler.setLevel(getattr(logging, _console_level, logging.WARNING))
 
     logging.basicConfig(
         level=logging.DEBUG,

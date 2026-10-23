@@ -404,7 +404,7 @@ class ScannerPanel(BasePanel):
         self._set_status(
             f"⏳ {scan_code} 조회 중... 종목별 시세 수집 포함 (req_id={self._req_id})")
         self._scan_timeout.start()   # 30초 타임아웃 시작
-        log.info("Scanner scan: req_id=%d code=%s filters=%s",
+        log.debug("Scanner scan: req_id=%d code=%s filters=%s",
                  self._req_id, scan_code, filters)
         try:
             self._broker.request_scanner(self._req_id, scan_code, filters)
@@ -595,7 +595,7 @@ class ScannerPanel(BasePanel):
         self._btn_save.setEnabled(False)   # 불러온 데이터는 재저장 불필요
         self._set_status(
             f"📂 불러오기 완료 — {saved_at}  {label}  {len(results)}개")
-        log.info("Scanner load: %s (%d rows)", path, len(results))
+        log.debug("Scanner load: %s (%d rows)", path, len(results))
 
     # ════════════════════════════════════════════════════════
     # 테이블 인터랙션

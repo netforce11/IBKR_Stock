@@ -116,8 +116,10 @@ if IBAPI_OK:
         def error(self, req_id: int, error_code: int,
                   error_string: str, advanced_order_reject: str = "") -> None:
             # 무시해도 되는 정보성 코드
+            # 2174/2176 = 히스토리 요청 시간대 안내 경고 (실시간 1분봉 재조회마다 발생)
             _INFO = {2100, 2103, 2104, 2105, 2106, 2107,
-                     2108, 2109, 2119, 2158, 2168, 300, 10167, 101}
+                     2108, 2109, 2119, 2158, 2168, 2174, 2176,
+                     300, 10167, 101}
             # 스캐너 보강용 시세 / 계약정보 요청 오류 → 메인 스레드에서 해당 요청 종료 처리
             if (req_id in self._b._enrich_req
                     or req_id in self._b._cd_callbacks):
@@ -390,7 +392,7 @@ class IBKRBroker(BaseBroker):
         c = _make_stk_contract(sym)
         # tick_type 233 = RT Volume (last/size/time), 165 = misc stats
         self._ib.reqMktData(req_id, c, "233,165", False, False, [])
-        log.info("구독: %s reqId=%d", sym, req_id)
+        log.debug("구독: %s reqId=%d", sym, req_id)
 
     def unsubscribe_quote(self, symbol: str) -> None:
         sym = symbol.upper()
@@ -794,7 +796,7 @@ class IBKRBroker(BaseBroker):
         entry = self._hist_callbacks.pop(req_id, None)
         if entry:
             symbol, bars, callback = entry
-            log.info("분봉 수신 완료: %s — %d bars", symbol, len(bars))
+            log.debug("분봉 수신 완료: %s — %d bars", symbol, len(bars))
             if callback:
                 try:
                     callback(bars)
@@ -854,7 +856,7 @@ class IBKRBroker(BaseBroker):
         self._scanner_buf[req_id] = {"scan_code": scan_code, "rows": [],
                                      "contracts": [], "fallback": []}
         self._ib.reqScannerSubscription(req_id, sub, [], [])
-        log.info("Scanner request: req_id=%d scan_code=%s", req_id, scan_code)
+        log.debug("Scanner request: req_id=%d scan_code=%s", req_id, scan_code)
 
     def cancel_scanner(self, req_id: int) -> None:
         if self._ib:
@@ -917,7 +919,7 @@ class IBKRBroker(BaseBroker):
         if not buf:
             return
         rows = buf["rows"]
-        log.info("Scanner rows: req_id=%d rows=%d — 시세 보강 시작",
+        log.debug("Scanner rows: req_id=%d rows=%d — 시세 보강 시작",
                  req_id, len(rows))
         if not rows or not self._connected or not self._ib:
             self._publish_scanner_result(req_id, buf["scan_code"], rows)
@@ -943,7 +945,7 @@ class IBKRBroker(BaseBroker):
             "results":   rows,
             "ts":        time.time(),
         })
-        log.info("Scanner result: req_id=%d rows=%d", req_id, len(rows))
+        log.debug("Scanner result: req_id=%d rows=%d", req_id, len(rows))
 
     # ── 스캐너 결과 시세 보강 ───────────────────────────────
     # 시세 라인 한도(기본 100) 보호 — 한 번에 최대 _ENRICH_BATCH 종목씩 요청
@@ -1113,7 +1115,7 @@ class IBKRBroker(BaseBroker):
             if mcap_m:
                 row["market_cap"] = mcap_m * 1e6
             row["fundamentals"] = ratios
-        log.info("Scanner 보강 완료: 시세 수신 %d / %d", got, len(job["rows"]))
+        log.debug("Scanner 보강 완료: 시세 수신 %d / %d", got, len(job["rows"]))
 
     # ── 계약 상세 (기업 정보) ───────────────────────────────
     def request_contract_details(self, symbol: str, callback,

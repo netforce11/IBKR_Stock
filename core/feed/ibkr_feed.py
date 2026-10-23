@@ -48,7 +48,7 @@ class IBKRFeed:
             self._subs.add(sym)
         try:
             self._broker.subscribe_quote(sym)
-            log.info("Feed 구독: %s", sym)
+            log.debug("Feed 구독: %s", sym)
         except AttributeError:
             # MockBroker는 subscribe_quote 없음 → MockBroker.subscribe() 직접 호출
             try:
@@ -64,7 +64,7 @@ class IBKRFeed:
             self._subs.discard(sym)
         try:
             self._broker.unsubscribe_quote(sym)
-            log.info("Feed 구독 해제: %s", sym)
+            log.debug("Feed 구독 해제: %s", sym)
         except AttributeError:
             pass
 
@@ -84,7 +84,7 @@ class IBKRFeed:
         sym = symbol.upper()
         try:
             self._broker.request_historical(sym, duration, bar_size, callback)
-            log.info("분봉 요청: %s (%s, %s)", sym, duration, bar_size)
+            log.debug("분봉 요청: %s (%s, %s)", sym, duration, bar_size)
         except AttributeError:
             log.debug("MockBroker — request_historical 미지원")
 

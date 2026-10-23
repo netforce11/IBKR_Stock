@@ -79,7 +79,7 @@ class ScannerStorage:
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                         encoding="utf-8")
-        log.info("ScannerStorage saved: %s (%d rows)",
+        log.debug("ScannerStorage saved: %s (%d rows)",
                  path, len(payload["results"]))
         return path
 
