@@ -218,6 +218,28 @@ class SubscriptionWidget(QWidget):
         self._val.setText(f"{n}개")
         self._val.setStyleSheet(_LBL_QSS.format(color=color))
 
+    def set_lines(self, snap: dict) -> None:
+        """IBKR 시세 라인 집계(내 앱 + 같은 PC 의 다른 앱) 표시"""
+        local, others = snap.get("local", 0), snap.get("others", 0)
+        total, max_ = snap.get("total", local + others), snap.get("max", 95)
+        text = (f"내 {local} + 타앱 {others} = {total} / {max_}" if others
+                else f"{total} / {max_}")
+        if snap.get("limit_hit"):
+            text += " ⚠한도"
+        ratio = total / max_ if max_ else 0.0
+        color = "#F85149" if (ratio >= 1.0 or snap.get("limit_hit")) else \
+                "#D29922" if ratio >= 0.8 else (_C_OK if total > 0 else _C_DIM)
+        self._count = total
+        self._val.setText(text)
+        self._val.setStyleSheet(_LBL_QSS.format(color=color))
+        det = snap.get("others_detail") or {}
+        tags = snap.get("by_tag") or {}
+        self._val.setToolTip(
+            "IBKR 시세 라인(계정 공유 풀) 사용량\n"
+            f"내 앱: {local}  ({', '.join(f'{k} {v}' for k, v in tags.items()) or '-'})\n"
+            f"다른 앱: {others}  ({', '.join(f'{k} {v}' for k, v in det.items()) or '-'})\n"
+            f"한도(안전 여유 포함): {max_}")
+
 
 class HtsStatusBar:
     """
@@ -281,7 +303,15 @@ class HtsStatusBar:
             self._lat.update_latency(ts_ms)
 
     def _refresh_subs(self) -> None:
-        """피드 구독 수 갱신"""
+        """구독 수 갱신 — 라인 집계(LineRegistry)가 있으면 그것을 우선 사용"""
+        try:
+            from shared.core.line_registry import get_line_registry
+            _reg = get_line_registry()
+            if _reg is not None:
+                self._subs.set_lines(_reg.snapshot())
+                return
+        except Exception:
+            pass
         if self._feed and hasattr(self._feed, "_subs"):
             n = len(self._feed._subs)
         else:

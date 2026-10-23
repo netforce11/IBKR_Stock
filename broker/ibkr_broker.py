@@ -97,6 +97,27 @@ if IBAPI_OK:
             EClient.__init__(self, self)
             self._b = broker
 
+        # ── 시세 라인 집계 (모든 reqMktData/cancelMktData 의 단일 통로) ──
+        def reqMktData(self, reqId, contract, genericTickList, snapshot,
+                       regulatorySnapshot, mktDataOptions):
+            reg = getattr(self._b, "_lines", None)
+            if reg is not None and not snapshot:
+                tag = "scan" if reqId in self._b._enrich_req else "quote"
+                if not reg.try_reserve(reqId, tag):
+                    snap = reg.snapshot()
+                    log.warning("[IBKR] 시세 라인 한도 도달 — 구독 보류 reqId=%d (%s) "
+                                "내 %d + 타앱 %d / %d", reqId, tag,
+                                snap["local"], snap["others"], snap["max"])
+                    return
+            return super().reqMktData(reqId, contract, genericTickList, snapshot,
+                                      regulatorySnapshot, mktDataOptions)
+
+        def cancelMktData(self, reqId):
+            reg = getattr(self._b, "_lines", None)
+            if reg is not None:
+                reg.release(reqId)
+            return super().cancelMktData(reqId)
+
         # ── 연결 이벤트 ───────────────────────────────────────
         def connectAck(self) -> None:
             log.info("[IBKRBroker] 연결 ACK")
@@ -109,12 +130,22 @@ if IBAPI_OK:
 
         def connectionClosed(self) -> None:
             self._b._connected = False
+            if getattr(self._b, "_lines", None) is not None:
+                self._b._lines.clear()          # 연결이 끊기면 라인은 전부 해제됨
             log.warning("[IBKRBroker] 연결 해제")
             self._b._bus.publish(Topics.BROKER_DISCONNECTED,
                                  {"broker": "ibkr", "ts": time.time()})
 
         def error(self, req_id: int, error_code: int,
                   error_string: str, advanced_order_reject: str = "") -> None:
+            # 라인을 점유하지 못한 요청(101 한도 초과 / 200 / 354)은 집계에서 제거
+            # (101 은 아래 _INFO 로 조용히 버려지므로 그 전에 처리)
+            _reg = getattr(self._b, "_lines", None)
+            if _reg is not None and req_id > 0:
+                _reg.on_ib_error(req_id, error_code)
+            if error_code == 101:
+                log.warning("[IBKR] 에러 101: 시세 라인 한도 초과 req=%d — "
+                            "다른 앱/TWS 가 라인을 쓰고 있는지 확인", req_id)
             # 무시해도 되는 정보성 코드
             # 2174/2176 = 히스토리 요청 시간대 안내 경고 (실시간 1분봉 재조회마다 발생)
             _INFO = {2100, 2103, 2104, 2105, 2106, 2107,
@@ -256,6 +287,14 @@ class IBKRBroker(BaseBroker):
         self._ib_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
+        # 시세 라인 집계 + 같은 PC 의 다른 앱(Tradier_Working2 등)과 합산 (shared/core/line_registry.py)
+        try:
+            from shared.core.line_registry import get_line_registry
+            self._lines = get_line_registry("ibkr_stock", limit=95)
+        except Exception as _e:
+            log.warning("[IBKRBroker] LineRegistry 사용 불가(집계 없이 동작): %s", _e)
+            self._lines = None
+
         # reqId 관리 (시세 구독별 ID)
         self._next_req_id  = 100
         self._sym_req: Dict[str, int] = {}   # symbol → req_id
@@ -392,6 +431,14 @@ class IBKRBroker(BaseBroker):
         c = _make_stk_contract(sym)
         # tick_type 233 = RT Volume (last/size/time), 165 = misc stats
         self._ib.reqMktData(req_id, c, "233,165", False, False, [])
+        # 라인 한도로 보류됐으면(=집계에 없음) 구독된 것처럼 남기지 않고 되돌림
+        if self._lines is not None and not self._lines.has(req_id):
+            with self._lock:
+                self._sym_req.pop(sym, None)
+                self._req_sym.pop(req_id, None)
+                self._price_cache.pop(sym, None)
+            log.warning("구독 보류(시세 라인 한도): %s", sym)
+            return
         log.debug("구독: %s reqId=%d", sym, req_id)
 
     def unsubscribe_quote(self, symbol: str) -> None:
@@ -1002,6 +1049,10 @@ class IBKRBroker(BaseBroker):
             try:
                 # 165 = 평균거래량(tick 21), 258 = 펀더멘털 비율(tick 47)
                 self._ib.reqMktData(rid, c, "165,258", False, False, [])
+                if self._lines is not None and not self._lines.has(rid):
+                    # 라인 한도 — 이 종목의 보강 시세는 건너뜀
+                    self._enrich_req.pop(rid, None)
+                    job["active"].pop(rid, None)
             except Exception:
                 log.exception("보강 시세 요청 실패: %s", c.symbol)
                 self._enrich_req.pop(rid, None)
