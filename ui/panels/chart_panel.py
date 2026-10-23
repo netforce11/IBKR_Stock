@@ -277,11 +277,38 @@ def _bars_to_candles(bars: list, daily: bool = False) -> list:
 # ══════════════════════════════════════════════════════════════
 # 패널
 # ══════════════════════════════════════════════════════════════
+def _et_now() -> datetime:
+    """현재 미국 동부시간 (서머타임 자동 반영)"""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        from datetime import timezone, timedelta
+        return datetime.now(timezone(timedelta(hours=-5)))
+
+
+def _is_regular_session(et: datetime) -> bool:
+    """미국 정규장(평일 09:30~16:00 ET) 여부 — 공휴일은 판단하지 않음"""
+    if et.weekday() >= 5:
+        return False
+    hm = et.hour * 60 + et.minute
+    return 9 * 60 + 30 <= hm < 16 * 60
+
+
 class StockChartPanel(MinuteChartPanel):
     """IBKR_Stock 전용 차트 패널.
     심볼·날짜는 DataBus(WATCHLIST_SELECT / CHART_DATE_SELECT)로만 제어.
     사이드바 완전 제거 → 차트가 패널 전체 차지.
+
+    [실시간 1분봉]
+      - stock.price.<SYM> 틱으로 진행 중인 봉(live bar) 고가/저가/종가 갱신
+      - 1분 경계마다 진행 봉을 확정하고, 3초 뒤 IBKR 최근 30분 분봉을
+        다시 받아 거래량 포함 정확한 값으로 교체
+      - 상단 바에 "다음 봉까지 N초" 카운트다운 표시
+      - 이미 1분봉 화면에서 [1분봉] 버튼 클릭 → 즉시 다시 불러오기
     """
+    _LIVE_REFRESH_DELAY_MS = 3_000      # 1분 경계 후 분봉 재조회까지 대기
+    _LIVE_REFRESH_DURATION = "1800 S"   # 재조회 범위 (최근 30분)
     PANEL_ID      = "stock_chart"
     TITLE         = "주식 차트"
     DEFAULT_SIZE  = (800, 500)
@@ -310,6 +337,20 @@ class StockChartPanel(MinuteChartPanel):
         bus.subscribe(Topics.BROKER_CONNECTED, self,
                       lambda d: self._invoke_main("_on_broker_connected", d))
 
+        # ── 실시간 1분봉 ──────────────────────────────────────
+        self._price_sub_sym: str | None = None
+        self._last_et_minute: int | None = None
+        self._live_refresh_busy = False
+        self._subscribe_price(self._symbol)
+        self._build_countdown_label()
+
+        from PyQt6.QtCore import QTimer
+        self._clock = QTimer(self)
+        self._clock.setInterval(1000)
+        self._clock.timeout.connect(self._on_clock)
+        self._clock.start()
+        self._on_clock()
+
     # ── 로더 주입 ─────────────────────────────────────────────
     def _make_minute_loader(self, symbol: str, target_date: date):
         return IBKRMinuteLoader(symbol, target_date, broker=self._broker)
@@ -331,6 +372,178 @@ class StockChartPanel(MinuteChartPanel):
         old = getattr(self, "_symbol", None)
         super()._set_symbol(symbol)
         self._update_indicator_subs(symbol, old)
+        if hasattr(self, "_clock"):          # __init__ 완료 후에만
+            self._subscribe_price(self._symbol)
+
+    # ── 1분봉 버튼: 이미 1분봉이면 다시 불러오기 ────────────────
+    def _set_chart_mode(self, mode: str) -> None:
+        if mode == self._chart_mode == "minute":
+            self._btn_minute.setChecked(True)   # 토글 해제 방지
+            self._refresh()
+            return
+        super()._set_chart_mode(mode)
+
+    # ── 실시간 1분봉 ─────────────────────────────────────────
+    def _build_countdown_label(self) -> None:
+        from PyQt6.QtWidgets import QLabel
+        self._countdown_lbl = QLabel("")
+        self._countdown_lbl.setStyleSheet(
+            "color:#FBBF24; font-size:12px; font-weight:bold; padding:0 6px;")
+        self._countdown_lbl.setToolTip("다음 1분봉 시작까지 남은 시간 (미국 동부시간 기준)")
+        try:
+            bar_lay = self._btn_minute.parentWidget().layout()
+            idx = bar_lay.indexOf(self._ratio_combo)
+            bar_lay.insertWidget(idx + 1 if idx >= 0 else 2, self._countdown_lbl)
+        except Exception:
+            log.debug("카운트다운 라벨 배치 실패", exc_info=True)
+
+    def _subscribe_price(self, symbol: str) -> None:
+        sym = (symbol or "").upper()
+        if not sym or sym == self._price_sub_sym:
+            return
+        if self._price_sub_sym:
+            self._bus.unsubscribe(Topics.stock_price(self._price_sub_sym), self)
+        self._price_sub_sym = sym
+        self._bus.subscribe(Topics.stock_price(sym), self,
+                            lambda d: self._invoke_main("_on_price_tick", d))
+        # 시세 구독 보장 (관심종목에 없는 종목도 실시간 틱 수신)
+        sub = getattr(self._broker, "subscribe_quote", None)
+        if sub and getattr(self._broker, "_connected", False):
+            try:
+                sub(sym)
+            except Exception:
+                log.debug("subscribe_quote 실패: %s", sym, exc_info=True)
+
+    def _is_live_view(self) -> bool:
+        """오늘 날짜 1분봉 단일일 보기인지"""
+        if self._chart_mode != "minute":
+            return False
+        if getattr(self, "_chk_multiday", None) and self._chk_multiday.isChecked():
+            return False
+        try:
+            return self._calendar.selectedDate().toPyDate() == date.today() \
+                or self._calendar.selectedDate().toPyDate() == _et_now().date()
+        except Exception:
+            return False
+
+    def _on_clock(self) -> None:
+        """1초 타이머: 카운트다운 표시 + 1분 경계 처리"""
+        et = _et_now()
+        live = self._is_live_view()
+        if not live:
+            self._countdown_lbl.setText("")
+        elif _is_regular_session(et):
+            self._countdown_lbl.setText(f"⏱ 다음 봉 {60 - et.second:2d}초")
+        else:
+            self._countdown_lbl.setText("⏸ 정규장 외")
+
+        minute_key = et.hour * 60 + et.minute
+        if self._last_et_minute is None:
+            self._last_et_minute = minute_key
+            return
+        if minute_key != self._last_et_minute:
+            self._last_et_minute = minute_key
+            if live and self._candles and _is_regular_session(et):
+                self._close_live_bar()
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(self._LIVE_REFRESH_DELAY_MS,
+                                  self._refresh_recent_bars)
+
+    from PyQt6.QtCore import pyqtSlot as _slot_tick
+
+    @_slot_tick(object)
+    def _on_price_tick(self, data: dict) -> None:
+        """현재가 틱 → 진행 중인 1분봉 갱신"""
+        if data.get("symbol", "").upper() != self._symbol:
+            return
+        if not self._is_live_view() or not self._candles:
+            return
+        if not _is_regular_session(_et_now()):
+            return
+        price = float(data.get("price") or 0)
+        if price <= 0:
+            return
+        lb = self._live_bar
+        if not lb:
+            lb = {"symbol": self._symbol, "open": price, "high": price,
+                  "low": price, "close": price, "volume": 0,
+                  "t": self._candles[-1].t + 60}
+        else:
+            lb = dict(lb)
+            lb["high"]  = max(float(lb.get("high", price)), price)
+            lb["low"]   = min(float(lb.get("low", price)), price)
+            lb["close"] = price
+        self._live_bar = lb
+        self._render_live_tick()
+
+    def _on_minute_loaded(self, candles: list) -> None:
+        """분봉 로드 완료 — 장중이면 마지막(진행 중) 봉을 live bar 로 분리"""
+        super()._on_minute_loaded(candles)
+        if (len(self._candles) > 1 and self._is_live_view()
+                and _is_regular_session(_et_now())
+                and getattr(self._broker, "_connected", False)):
+            cur = self._candles.pop()
+            self._live_bar = {"symbol": self._symbol, "open": cur.o,
+                              "high": cur.h, "low": cur.l, "close": cur.c,
+                              "volume": cur.v, "t": cur.t}
+            self._render_full()
+            self._render_live_tick()
+
+    def _close_live_bar(self) -> None:
+        """1분 경계: 진행 봉을 확정 봉으로 추가 (거래량은 재조회 시 보정)"""
+        lc = self._live_bar_as_candle()
+        self._live_bar = None
+        if lc is None:
+            return
+        self._candles.append(lc)
+        self._render_full()
+
+    def _refresh_recent_bars(self) -> None:
+        """최근 30분 분봉 재조회 → 차트 끝부분을 정확한 OHLCV 로 교체"""
+        broker = self._broker
+        if (self._live_refresh_busy or not self._is_live_view()
+                or not getattr(broker, "_connected", False)
+                or not hasattr(broker, "request_historical")):
+            return
+        self._live_refresh_busy = True
+        sym = self._symbol
+        try:
+            broker.request_historical(
+                sym, self._LIVE_REFRESH_DURATION, "1 min",
+                callback=lambda bars, s=sym: self._on_recent_bars(s, bars))
+        except Exception:
+            self._live_refresh_busy = False
+            log.exception("최근 분봉 재조회 실패")
+
+    def _on_recent_bars(self, sym: str, bars: list) -> None:
+        # 콜백은 drain_tick_queue(Qt 메인 스레드)에서 호출됨
+        self._live_refresh_busy = False
+        try:
+            if sym != self._symbol or not self._is_live_view():
+                return
+            fresh = _bars_to_candles(bars)
+            if len(fresh) < 1 or not self._candles:
+                return
+            # 마지막 봉 = 진행 중인 봉 → live bar 로, 나머지는 확정 봉
+            closed, current = fresh[:-1], fresh[-1]
+            first_t = fresh[0].t
+            kept = [c for c in self._candles if c.t < first_t]
+            self._candles = kept + closed
+            prev_live = self._live_bar or {}
+            self._live_bar = {
+                "symbol": sym,
+                "open":   current.o,
+                "high":   max(current.h, float(prev_live.get("high", 0) or 0)),
+                "low":    min(current.l, float(prev_live.get("low", current.l)
+                                               or current.l)),
+                "close":  float(prev_live.get("close", 0) or current.c),
+                "volume": current.v,
+                "t":      current.t,
+            }
+            self._render_full()
+            self._render_live_tick()
+        except Exception:
+            log.exception("최근 분봉 병합 오류")
 
     # ── _invoke_main 슬롯 ─────────────────────────────────────
     from PyQt6.QtCore import pyqtSlot
@@ -382,6 +595,11 @@ class StockChartPanel(MinuteChartPanel):
         d = _date.today()
         self._calendar.setSelectedDate(QDate(d.year, d.month, d.day))
         self._refresh()
+
+    def closeEvent(self, e) -> None:
+        if hasattr(self, "_clock"):
+            self._clock.stop()
+        super().closeEvent(e)
 
     def register_shortcuts(self) -> list:
         base = super().register_shortcuts()

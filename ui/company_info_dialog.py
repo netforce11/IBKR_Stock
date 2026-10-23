@@ -6,10 +6,12 @@
 #   2. 투자 지표      — IBKR Fundamental Ratios (PER/EPS/PBR/배당/베타/ROE/52주 고저)
 #   3. 기업 정보      — IBKR 계약 상세 (회사명/업종 분류/거래소)
 #                       + Yahoo Finance (섹터/산업/국가/직원 수/웹사이트)
-#   4. 회사 개요      — Yahoo Finance 사업 설명 (영문)
+#   4. 회사 개요      — Yahoo Finance 사업 설명 → 한국어 번역 (원문 전환 가능)
 #
 # Yahoo Finance 조회는 yfinance 패키지가 필요 (pip install yfinance).
-# 미설치 시 IBKR 정보만 표시한다. 조회는 백그라운드 스레드에서 수행.
+# 한국어 번역은 deep-translator 패키지가 필요 (pip install deep-translator,
+# Google 번역 무료 엔드포인트 사용 — API 키 불필요). 미설치 시 영문 원문 표시.
+# 조회·번역은 백그라운드 스레드에서 수행.
 
 from __future__ import annotations
 
@@ -58,6 +60,31 @@ def _fmt_num(v, digits: int = 2, suffix: str = "") -> str:
     return f"{v:,.{digits}f}{suffix}"
 
 
+def _translate_ko(text: str) -> tuple[str, str]:
+    """영문 → 한국어 번역. (번역문, 오류메시지) 반환. 백그라운드 스레드에서 호출."""
+    if not text:
+        return "", ""
+    try:
+        from deep_translator import GoogleTranslator   # type: ignore
+    except ImportError:
+        return "", "deep-translator 미설치 — 'pip install deep-translator' 시 한국어로 표시됩니다."
+    # 요청당 5000자 제한 → 문장 단위로 4500자 이내 청크 분할
+    chunks, cur = [], ""
+    for sent in text.replace("\n", " ").split(". "):
+        piece = sent if sent.endswith(".") else sent + ". "
+        if len(cur) + len(piece) > 4500 and cur:
+            chunks.append(cur)
+            cur = ""
+        cur += piece
+    if cur:
+        chunks.append(cur)
+    try:
+        tr = GoogleTranslator(source="auto", target="ko")
+        return " ".join(tr.translate(c) or "" for c in chunks).strip(), ""
+    except Exception as e:
+        return "", f"번역 실패 ({e}) — 영문 원문을 표시합니다."
+
+
 def _fetch_yahoo(symbol: str) -> dict:
     """yfinance 로 기업 개요 조회 (백그라운드 스레드에서 호출)"""
     if symbol in _YAHOO_CACHE:
@@ -93,6 +120,7 @@ def _fetch_yahoo(symbol: str) -> dict:
         "low_52w":   info.get("fiftyTwoWeekLow"),
         "revenue":   info.get("totalRevenue"),
     }
+    data["summary_ko"], data["translate_error"] = _translate_ko(data["summary"])
     _YAHOO_CACHE[symbol] = data
     return data
 
@@ -116,7 +144,7 @@ class CompanyInfoDialog(QDialog):
 
         self.setWindowTitle(f"기업 정보 — {self._symbol}")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.resize(560, 640)
+        self.resize(600, 720)
         self.setStyleSheet("QDialog { background:#F5F5F5; color:#111827; }"
                            "QLabel { font-size:12px; }")
         self._build_ui()
@@ -169,9 +197,26 @@ class CompanyInfoDialog(QDialog):
         self._summary = QTextBrowser()
         self._summary.setOpenExternalLinks(True)
         self._summary.setStyleSheet(
-            "QTextBrowser { background:#fff; border:none; font-size:12px; }")
+            "QTextBrowser { background:#fff; border:none; font-size:16px; }")
         self._summary.setPlainText("회사 개요 조회 중…")
         g.addWidget(self._summary)
+
+        # 번역 / 원문 전환
+        tr_row = QHBoxLayout()
+        self._tr_lbl = QLabel("")
+        self._tr_lbl.setStyleSheet("color:#888; font-size:10px;")
+        tr_row.addWidget(self._tr_lbl, 1)
+        self._btn_orig = QPushButton("원문 보기")
+        self._btn_orig.setCheckable(True)
+        self._btn_orig.setVisible(False)
+        self._btn_orig.setStyleSheet(
+            "background:#E8ECF0; color:#374151; font-size:11px; padding:2px 10px;"
+            "border:1px solid #CDD0D5; border-radius:3px;")
+        self._btn_orig.toggled.connect(self._on_toggle_original)
+        tr_row.addWidget(self._btn_orig)
+        g.addLayout(tr_row)
+        self._summary_en = ""
+        self._summary_ko = ""
         lay.addWidget(grp, 1)
 
         # 하단: 출처 표시 + 닫기
@@ -326,8 +371,26 @@ class CompanyInfoDialog(QDialog):
         self._set("beta",     _fmt_num(d.get("beta")), only_if_empty=True)
         self._set("high_52w", _fmt_num(d.get("high_52w")), only_if_empty=True)
         self._set("low_52w",  _fmt_num(d.get("low_52w")), only_if_empty=True)
-        self._summary.setPlainText(d.get("summary") or "사업 개요 정보가 없습니다.")
+        self._summary_en = d.get("summary") or ""
+        self._summary_ko = d.get("summary_ko") or ""
+        if not self._summary_en:
+            self._summary.setPlainText("사업 개요 정보가 없습니다.")
+        elif self._summary_ko:
+            self._summary.setPlainText(self._summary_ko)
+            self._tr_lbl.setText("Google 번역 (자동 번역이라 일부 표현이 어색할 수 있음)")
+            self._btn_orig.setVisible(True)
+        else:
+            self._summary.setPlainText(self._summary_en)
+            self._tr_lbl.setText(d.get("translate_error", ""))
         self._add_source("Yahoo Finance")
+
+    def _on_toggle_original(self, show_original: bool) -> None:
+        if show_original:
+            self._summary.setPlainText(self._summary_en)
+            self._btn_orig.setText("번역 보기")
+        else:
+            self._summary.setPlainText(self._summary_ko)
+            self._btn_orig.setText("원문 보기")
 
     def _add_source(self, name: str) -> None:
         cur = self._src_lbl.text()
